@@ -1,5 +1,10 @@
 import asyncio
 import sys
+import os
+import re
+from prompt_toolkit import PromptSession
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.formatted_text import ANSI
 from src.state.db import init_db, SessionLocal
 from src.state import repository
 from src.agents.team import classify_input, execute_step_debate
@@ -32,6 +37,74 @@ AGENT_COLORS = {
     "RegretGuardJudge": RED,
     "System": GREY
 }
+
+def get_prettified_cwd() -> str:
+    """Gets the current working directory, replacing the home prefix with ~ for cleaner display."""
+    cwd = os.getcwd()
+    home = os.path.expanduser("~")
+    if cwd.startswith(home):
+        cwd = cwd.replace(home, "~", 1)
+    return cwd
+
+def print_welcome_box():
+    """Renders a Codex-style startup welcome box with dynamically padded interior space."""
+    width = 58  # interior width
+    prettified_cwd = get_prettified_cwd()
+    
+    lines = [
+        f"{BOLD}{CYAN}>_ SWE Workflow Coach (v1.0.0){RESET}",
+        "",
+        f"{BOLD}model:{RESET}     {YELLOW}qwen/qwen3.5-9b{RESET}",
+        f"{BOLD}directory:{RESET} {BLUE}{prettified_cwd}{RESET}"
+    ]
+    
+    print(f"\n{GREY}┌" + "─" * (width + 2) + f"┐{RESET}")
+    for line in lines:
+        visible_len = len(re.sub(r'\033\[[0-9;]*m', '', line))
+        padding = width - visible_len
+        print(f"{GREY}│{RESET} {line}" + " " * padding + f" {GREY}│{RESET}")
+    print(f"{GREY}└" + "─" * (width + 2) + f"┘{RESET}")
+
+def print_prompt_bar(workflow_type: str, current_step: str = None):
+    """Renders a Codex-style status/metadata bar directly preceding input prompt."""
+    prettified_cwd = get_prettified_cwd()
+    
+    if workflow_type == "BUG":
+        type_str = f"{RED}🔴 BUG{RESET}"
+    elif workflow_type == "FEATURE":
+        type_str = f"{GREEN}🟢 FEATURE{RESET}"
+    elif workflow_type == "MEETING/PLANNING":
+        type_str = f"{BLUE}🔵 MEETING/PLANNING{RESET}"
+    else:
+        type_str = f"{MAGENTA}🤖 SWE Coach{RESET}"
+        
+    step_str = f" · {BOLD}{CYAN}{current_step}{RESET}" if current_step else ""
+    
+    print(f"{BOLD}{type_str}{step_str} · {GREY}qwen/qwen3.5-9b · {prettified_cwd}{RESET}")
+
+async def get_multiline_input(prompt_symbol: str = "> ") -> str:
+    """Reads multiline input from the user asynchronously. Press Shift+Enter to insert a newline. Press Enter to submit."""
+    kb = KeyBindings()
+
+    @kb.add("enter")
+    def _(event):
+        event.current_buffer.validate_and_handle()
+
+    @kb.add("c-j")
+    def _(event):
+        event.current_buffer.insert_text("\n")
+
+    @kb.add("escape", "enter")
+    def _(event):
+        event.current_buffer.insert_text("\n")
+
+    prompt_text = f"{BOLD}{CYAN}{prompt_symbol}{RESET}"
+    session = PromptSession(key_bindings=kb, multiline=True)
+    try:
+        user_input = await session.prompt_async(ANSI(prompt_text))
+        return user_input.strip()
+    except EOFError:
+        return ""
 
 async def spinner_task(message="Thinking"):
     """Displays a rotating spinner while waiting for background processing/streaming."""
@@ -76,14 +149,14 @@ async def interactive_cli():
     init_db()
     db = SessionLocal()
     
-    print("\n" + f"{BOLD}{CYAN}╔══════════════════════════════════════════════════════════╗")
-    print(f"║        🤖 SWE WORKFLOW COACH — INTERACTIVE SESSION       ║")
-    print(f"╚══════════════════════════════════════════════════════════╝{RESET}")
+    # Render startup Codex welcome box
+    print_welcome_box()
     print(f"{BOLD}Modes: Identify a {RED}BUG{RESET}{BOLD}, plan a {GREEN}FEATURE{RESET}{BOLD}, or capture {BLUE}MEETING/PLANNING{RESET}{BOLD} notes.{RESET}\n")
     
     # 1. Capture Raw Input
+    print_prompt_bar("INITIAL")
     print(f"{BOLD}{WHITE}Describe your task (e.g., bug error details, feature idea, agenda):{RESET}")
-    raw_input = input("> ").strip()
+    raw_input = await get_multiline_input()
     if not raw_input:
         print(f"{BOLD}{RED}Task description cannot be empty. Exiting.{RESET}")
         return
@@ -100,12 +173,6 @@ async def interactive_cli():
             sys.stdout.flush()
 
     def cli_token_callback(agent: str, token: str):
-        if token == "[THINKING]":
-            stop_spinner()
-            current_agent[0] = None  # Reset current agent to print new agent header next time
-            spinner[0] = asyncio.create_task(spinner_task("Agents debating & analyzing"))
-            return
-            
         stop_spinner()
         color = AGENT_COLORS.get(agent, CYAN)
         if current_agent[0] != agent:
@@ -128,7 +195,8 @@ async def interactive_cli():
     # Handle uncertainty
     while task_type == "UNCERTAIN":
         print(f"\n{BOLD}{MAGENTA}💬 [CoordinatorAgent]{RESET}: {clarifying_question}")
-        answer = input("> ").strip()
+        print_prompt_bar("INITIAL")
+        answer = await get_multiline_input()
         current_agent[0] = None  # Reset current agent tracker for next query
         
         spinner[0] = asyncio.create_task(spinner_task("Analyzing clarifying response"))
@@ -207,15 +275,65 @@ async def interactive_cli():
                     matched_pb = pb
                     break
             if matched_pb:
-                playbook_lines = [
-                    f"\n{BOLD}{YELLOW}🔥 ACTIVE TROUBLESHOOTING PLAYBOOK: {matched_pb.name.upper()}{RESET}",
-                    f"{GREY}────────────────────────────────────────────────────────────{RESET}"
-                ]
-                playbook_lines.extend(matched_pb.format_first_response().split("\n"))
-                playbook_lines.append(f"{GREY}────────────────────────────────────────────────────────────{RESET}\n")
-                await print_lines_gradually(playbook_lines)
+                print(f"\n{BOLD}{YELLOW}🔥 ACTIVE TROUBLESHOOTING PLAYBOOK: {matched_pb.name.upper()}{RESET}")
+                print(f"{GREY}────────────────────────────────────────────────────────────{RESET}")
 
-        # Render checklist progress
+                # 1. Checklist
+                spinner[0] = asyncio.create_task(spinner_task("Analyzing immediate playbook checklist"))
+                await asyncio.sleep(1.2)
+                stop_spinner()
+                checklist_lines = [f"### 📋 IMMEDIATE {matched_pb.name.upper()} PLAYBOOK CHECKLIST"]
+                for item in matched_pb.checklist:
+                    checklist_lines.append(f"- [ ] {item}")
+                checklist_lines.append("")
+                await print_lines_gradually(checklist_lines)
+
+                # 2. Hypotheses
+                spinner[0] = asyncio.create_task(spinner_task("Formulating prioritized hypotheses"))
+                await asyncio.sleep(1.2)
+                stop_spinner()
+                hypotheses_lines = ["### 🔍 PRIORITIZED HYPOTHESES"]
+                for idx, h in enumerate(matched_pb.hypotheses, 1):
+                    hypotheses_lines.append(f"{idx}. {h}")
+                hypotheses_lines.append("")
+                await print_lines_gradually(hypotheses_lines)
+
+                # 3. Tools
+                spinner[0] = asyncio.create_task(spinner_task("Identifying recommended diagnostic tools"))
+                await asyncio.sleep(1.2)
+                stop_spinner()
+                tools_lines = ["### 🛠️ RECOMMENDED DIAGNOSTIC TOOLS"]
+                for tool in matched_pb.recommended_tools:
+                    tools_lines.append(f"- {tool}")
+                tools_lines.append("")
+                await print_lines_gradually(tools_lines)
+
+                # 4. Next steps
+                spinner[0] = asyncio.create_task(spinner_task("Determining next diagnostic steps"))
+                await asyncio.sleep(1.2)
+                stop_spinner()
+                steps_lines = ["### 👣 NEXT DIAGNOSTIC STEPS"]
+                for idx, step in enumerate(matched_pb.diagnostic_steps, 1):
+                    steps_lines.append(f"{idx}. {step}")
+                steps_lines.append("")
+                await print_lines_gradually(steps_lines)
+
+                # 5. Clarifying questions
+                spinner[0] = asyncio.create_task(spinner_task("Compiling high-value clarifying questions"))
+                await asyncio.sleep(1.2)
+                stop_spinner()
+                questions_lines = ["### ❓ HIGH-VALUE CLARIFYING QUESTIONS"]
+                for q in matched_pb.clarifying_questions:
+                    questions_lines.append(f"- {q}")
+                questions_lines.append("")
+                await print_lines_gradually(questions_lines)
+                
+                print(f"{GREY}────────────────────────────────────────────────────────────{RESET}\n")
+
+        # Render checklist progress with spinner
+        spinner[0] = asyncio.create_task(spinner_task("Loading workflow progress checklist"))
+        await asyncio.sleep(1.2)
+        stop_spinner()
         await print_workflow_checklist(session, pending_step.name)
 
         print(f"{BOLD}{CYAN}>>> CURRENT STEP: {pending_step.name}{RESET}")
@@ -223,8 +341,11 @@ async def interactive_cli():
         if step_spec.is_critical:
             print(f"⚠️  {BOLD}{RED}CRITICAL STEP: Cannot be skipped without providing a reason.{RESET}")
         
-        print(f"\n{BOLD}{WHITE}Enter your inputs for this step (or type 'skip' to bypass):{RESET}")
-        user_input = input("> ").strip()
+        # Codex-style formatted prompt
+        print()
+        print_prompt_bar(task_type, pending_step.name)
+        print(f"{BOLD}{WHITE}Enter your inputs for this step (or type 'skip' to bypass):{RESET}")
+        user_input = await get_multiline_input()
         if not user_input:
             print(f"{RED}Input cannot be empty. Try again.{RESET}")
             continue
