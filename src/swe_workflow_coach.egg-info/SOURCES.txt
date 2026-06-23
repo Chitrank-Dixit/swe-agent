@@ -19,3 +19,5 @@ src/workflows/base.py
 src/workflows/bug.py
 src/workflows/feature.py
 src/workflows/meeting.py
+src/workflows/playbooks.py
+tests/test_live_stream.py

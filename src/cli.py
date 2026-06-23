@@ -13,6 +13,25 @@ from src.workflows.bug import bug_workflow
 from src.workflows.feature import feature_workflow
 from src.workflows.meeting import meeting_workflow
 
+# ---------------------------------------------------------------------------
+# Register Shift+Enter escape sequences so prompt_toolkit can distinguish
+# Shift+Enter from plain Enter.  This must happen BEFORE any PromptSession
+# is created so the parser trie includes the new sequences.
+#
+# Kitty keyboard protocol  : \x1b[13;2u   (Kitty, Ghostty, WezTerm, iTerm2)
+# xterm modifyOtherKeys    : \x1b[27;2;13~ (some xterm-compatible terminals)
+#
+# Terminals that already map Shift+Enter to ESC+CR (\x1b\r) are handled
+# automatically via the ("escape", "enter") key binding below.
+# ---------------------------------------------------------------------------
+try:
+    from prompt_toolkit.input.ansi_escape_sequences import ANSI_SEQUENCES
+    from prompt_toolkit.keys import Keys
+    ANSI_SEQUENCES['\x1b[13;2u'] = Keys.ControlJ
+    ANSI_SEQUENCES['\x1b[27;2;13~'] = Keys.ControlJ
+except (ImportError, AttributeError):
+    pass  # graceful fallback if prompt_toolkit internals change
+
 # ANSI Colors for premium terminal UI
 BOLD = "\033[1m"
 UNDERLINE = "\033[4m"
@@ -83,20 +102,37 @@ def print_prompt_bar(workflow_type: str, current_step: str = None):
     print(f"{BOLD}{type_str}{step_str} · {GREY}qwen/qwen3.5-9b · {prettified_cwd}{RESET}")
 
 async def get_multiline_input(prompt_symbol: str = "> ") -> str:
-    """Reads multiline input from the user asynchronously. Press Shift+Enter to insert a newline. Press Enter to submit."""
+    """Reads multiline input with a natural double-Enter-to-submit convention.
+
+    Key bindings:
+      Enter          → new line  (type naturally, paste code snippets)
+      Enter on empty → submit    (press Enter twice when done)
+      Ctrl+J         → force a blank line without submitting
+      Ctrl+D         → submit immediately (standard EOF)
+    """
     kb = KeyBindings()
 
     @kb.add("enter")
     def _(event):
-        event.current_buffer.validate_and_handle()
+        buf = event.current_buffer
+        # If the current line is empty and there's already content above,
+        # treat this as "done" and submit the input.
+        if buf.document.current_line_before_cursor == '' and buf.text.strip():
+            buf.validate_and_handle()
+        else:
+            buf.insert_text('\n')
 
     @kb.add("c-j")
     def _(event):
-        event.current_buffer.insert_text("\n")
+        # Force-insert a blank line (bypass the submit check)
+        event.current_buffer.insert_text('\n')
 
-    @kb.add("escape", "enter")
+    @kb.add("c-d")
     def _(event):
-        event.current_buffer.insert_text("\n")
+        # Ctrl+D: submit immediately (standard EOF convention)
+        buf = event.current_buffer
+        if buf.text.strip():
+            buf.validate_and_handle()
 
     prompt_text = f"{BOLD}{CYAN}{prompt_symbol}{RESET}"
     session = PromptSession(key_bindings=kb, multiline=True)
@@ -151,11 +187,13 @@ async def interactive_cli():
     
     # Render startup Codex welcome box
     print_welcome_box()
-    print(f"{BOLD}Modes: Identify a {RED}BUG{RESET}{BOLD}, plan a {GREEN}FEATURE{RESET}{BOLD}, or capture {BLUE}MEETING/PLANNING{RESET}{BOLD} notes.{RESET}\n")
+    print(f"{BOLD}Modes: Identify a {RED}BUG{RESET}{BOLD}, plan a {GREEN}FEATURE{RESET}{BOLD}, or capture {BLUE}MEETING/PLANNING{RESET}{BOLD} notes.{RESET}")
+    print(f"{GREY}  ⌨  Enter = new line  |  Enter twice = submit  |  Ctrl+D = submit now{RESET}\n")
     
     # 1. Capture Raw Input
     print_prompt_bar("INITIAL")
     print(f"{BOLD}{WHITE}Describe your task (e.g., bug error details, feature idea, agenda):{RESET}")
+    print(f"{GREY}  Enter = new line  |  Enter twice = submit{RESET}")
     raw_input = await get_multiline_input()
     if not raw_input:
         print(f"{BOLD}{RED}Task description cannot be empty. Exiting.{RESET}")
@@ -345,6 +383,7 @@ async def interactive_cli():
         print()
         print_prompt_bar(task_type, pending_step.name)
         print(f"{BOLD}{WHITE}Enter your inputs for this step (or type 'skip' to bypass):{RESET}")
+        print(f"{GREY}  Enter = new line  |  Enter twice = submit{RESET}")
         user_input = await get_multiline_input()
         if not user_input:
             print(f"{RED}Input cannot be empty. Try again.{RESET}")

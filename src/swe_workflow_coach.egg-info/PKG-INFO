@@ -15,6 +15,7 @@ Requires-Dist: sqlalchemy>=2.0.0
 Requires-Dist: pydantic>=2.6.0
 Requires-Dist: pydantic-settings>=2.2.0
 Requires-Dist: httpx>=0.27.0
+Requires-Dist: prompt-toolkit>=3.0.0
 Provides-Extra: dev
 Requires-Dist: pytest>=8.0.0; extra == "dev"
 Requires-Dist: pytest-asyncio>=0.23.0; extra == "dev"
@@ -79,53 +80,48 @@ The team consists of 8 agents orchestrating turn-based checks inside a group cha
 ## Setup & Running
 
 ### Prerequisites
-- Python 3.11+
+- Docker and Docker Compose installed.
 - LM Studio or any OpenAI-compatible API running locally.
 
 ### Config in LM Studio
 1. Open LM Studio.
 2. Download a tool-calling supported model, such as `qwen2.5-coder-7b-instruct` or similar.
 3. Start the Local Server (port `1234`).
-4. Ensure the system prompts and tool calling features are enabled.
+4. **IMPORTANT**: In the server settings panel, make sure to change the binding address from `127.0.0.1` to `0.0.0.0` (all network interfaces). This is required so that Docker Compose containers can route traffic successfully to the host machine via `host.docker.internal`.
+5. Ensure the system prompts and tool calling features are enabled.
+
+> [!NOTE]
+> The application uses a **5-second connection timeout** for LLM API calls. If the LM Studio server is offline or is binding only to localhost (preventing container connections), the client will time out after 5 seconds and automatically trigger local keyword-based heuristics to allow offline session testing.
 
 ---
 
-### Run Option 1: Docker Compose (Recommended)
-This runs the API and sets up host gateways to communicate with LM Studio on your local machine.
+### Run Application inside Docker Compose
 
+We provide a `Makefile` to simplify all execution steps.
+
+#### 1. Spin up the API Server
 ```bash
-docker-compose up --build
+make up
 ```
-The application will start at `http://localhost:8000`. Database states are persisted in `./data/coach.db`.
+This boots up the FastAPI container in detached mode, exposing the port at `http://localhost:8000`.
 
----
-
-### Run Option 2: Local Virtual Environment
-
-1. Create and activate a virtual environment:
+#### 2. Run the Interactive Coaching CLI
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+make run-cli
 ```
+This boots up a containerized interactive coaching session right inside your terminal, letting you speak directly to the agent debate team.
 
-2. Install dependencies:
+#### 3. Run the Test Suites
 ```bash
-pip install -e .[dev]
+make test
 ```
+Runs the 11 tests (including unit, integration, BDD, and functional debate loops) inside the Docker container.
 
-3. Configure environment variables inside `.env`:
-```ini
-DATABASE_URL=sqlite:///./coach.db
-LM_STUDIO_BASE_URL=http://localhost:1234/v1
-LM_STUDIO_API_KEY=lm-studio
-LM_STUDIO_MODEL=qwen2.5-coder-7b-instruct
-LOG_LEVEL=INFO
-```
-
-4. Run the API:
+#### 4. Clean up Container Volumes & Caches
 ```bash
-uvicorn src.api.main:app --reload
+make clean
 ```
+Stops the containers and wipes the SQLite storage volume, logs, and caches cleanly.
 
 ---
 
