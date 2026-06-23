@@ -100,6 +100,12 @@ async def interactive_cli():
             sys.stdout.flush()
 
     def cli_token_callback(agent: str, token: str):
+        if token == "[THINKING]":
+            stop_spinner()
+            current_agent[0] = None  # Reset current agent to print new agent header next time
+            spinner[0] = asyncio.create_task(spinner_task("Agents debating & analyzing"))
+            return
+            
         stop_spinner()
         color = AGENT_COLORS.get(agent, CYAN)
         if current_agent[0] != agent:

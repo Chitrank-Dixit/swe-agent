@@ -62,6 +62,8 @@ async def classify_input(raw_input: str, on_token_callback: Optional[Callable[[s
             elif isinstance(chunk, TextMessage):
                 if chunk.source != "user":
                     last_msg = chunk.content
+                    if on_token_callback:
+                        on_token_callback(chunk.source, "[THINKING]")
         
         # Check classification
         class_match = re.search(r"CLASSIFICATION:\s*(BUG|FEATURE|MEETING/PLANNING|UNCERTAIN)", last_msg, re.IGNORECASE)
@@ -287,6 +289,8 @@ async def execute_step_debate(
                     })
                     if chunk.source == "RegretGuardJudge":
                         final_msg = chunk.content
+                    if on_token_callback:
+                        on_token_callback(chunk.source, "[THINKING]")
                     
         # Parse final status from Judge message
         status_match = re.search(r"STATUS:\s*(COMPLETED|SKIPPED|PENDING)", final_msg, re.IGNORECASE)
