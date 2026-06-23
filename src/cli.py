@@ -33,21 +33,43 @@ AGENT_COLORS = {
     "System": GREY
 }
 
-def print_workflow_checklist(session, current_step_name):
-    """Renders a beautifully structured representation of the current workflow steps."""
-    print(f"\n{BOLD}{CYAN}╔══════════════════════════════════════════════════════════╗")
-    print(f"║ 📋 WORKFLOW PROGRESS CHECKLIST                           ║")
-    print(f"╚══════════════════════════════════════════════════════════╝{RESET}")
+async def spinner_task(message="Thinking"):
+    """Displays a rotating spinner while waiting for background processing/streaming."""
+    chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    idx = 0
+    try:
+        while True:
+            sys.stdout.write(f"\r{BOLD}{YELLOW}{chars[idx]}{RESET} {message}...")
+            sys.stdout.flush()
+            idx = (idx + 1) % len(chars)
+            await asyncio.sleep(0.08)
+    except asyncio.CancelledError:
+        pass
+
+async def print_lines_gradually(lines: list, delay=0.02):
+    """Prints a list of lines slowly one by one to create a smooth, premium typewriter flow."""
+    for line in lines:
+        print(line)
+        await asyncio.sleep(delay)
+
+async def print_workflow_checklist(session, current_step_name):
+    """Renders a beautifully structured representation of the current workflow steps gradually."""
+    lines = []
+    lines.append(f"\n{BOLD}{CYAN}╔══════════════════════════════════════════════════════════╗")
+    lines.append(f"║ 📋 WORKFLOW PROGRESS CHECKLIST                           ║")
+    lines.append(f"╚══════════════════════════════════════════════════════════╝{RESET}")
     for idx, step in enumerate(session.steps, 1):
         if step.name == current_step_name:
-            print(f"  {BOLD}{YELLOW}➡️  [PENDING]   {idx:02d}. {step.name}{RESET}")
+            lines.append(f"  {BOLD}{YELLOW}➡️  [PENDING]   {idx:02d}. {step.name}{RESET}")
         elif step.status == "COMPLETED":
-            print(f"  {GREEN}✔  [COMPLETED] {idx:02d}. {step.name}{RESET}")
+            lines.append(f"  {GREEN}✔  [COMPLETED] {idx:02d}. {step.name}{RESET}")
         elif step.status == "SKIPPED":
-            print(f"  {GREY}✖  [SKIPPED]   {idx:02d}. {step.name} (Reason: {step.reason}){RESET}")
+            lines.append(f"  {GREY}✖  [SKIPPED]   {idx:02d}. {step.name} (Reason: {step.reason}){RESET}")
         else:
-            print(f"  {GREY}   [PENDING]   {idx:02d}. {step.name}{RESET}")
-    print(f"{GREY}────────────────────────────────────────────────────────────{RESET}\n")
+            lines.append(f"  {GREY}   [PENDING]   {idx:02d}. {step.name}{RESET}")
+    lines.append(f"{GREY}────────────────────────────────────────────────────────────{RESET}\n")
+    
+    await print_lines_gradually(lines, delay=0.02)
 
 async def interactive_cli():
     """Starts an interactive command-line session for the Software Engineering Workflow Coach."""
@@ -67,11 +89,18 @@ async def interactive_cli():
         return
 
     # 2. Perform Classification
-    print(f"\n{BOLD}{GREY}[System] Classifying task category...{RESET}")
-    
     current_agent = [None]
+    spinner = [None]
     
+    def stop_spinner():
+        if spinner[0]:
+            spinner[0].cancel()
+            spinner[0] = None
+            sys.stdout.write("\r\033[K")
+            sys.stdout.flush()
+
     def cli_token_callback(agent: str, token: str):
+        stop_spinner()
         color = AGENT_COLORS.get(agent, CYAN)
         if current_agent[0] != agent:
             current_agent[0] = agent
@@ -79,7 +108,12 @@ async def interactive_cli():
         print(token, end="")
         sys.stdout.flush()
 
-    class_res = await classify_input(raw_input, on_token_callback=cli_token_callback)
+    # Start spinner and run classification
+    spinner[0] = asyncio.create_task(spinner_task("Classifying task category"))
+    try:
+        class_res = await classify_input(raw_input, on_token_callback=cli_token_callback)
+    finally:
+        stop_spinner()
     
     task_type = class_res["type"]
     clarifying_question = class_res["question"]
@@ -90,7 +124,13 @@ async def interactive_cli():
         print(f"\n{BOLD}{MAGENTA}💬 [CoordinatorAgent]{RESET}: {clarifying_question}")
         answer = input("> ").strip()
         current_agent[0] = None  # Reset current agent tracker for next query
-        class_res = await classify_input(answer, on_token_callback=cli_token_callback)
+        
+        spinner[0] = asyncio.create_task(spinner_task("Analyzing clarifying response"))
+        try:
+            class_res = await classify_input(answer, on_token_callback=cli_token_callback)
+        finally:
+            stop_spinner()
+            
         task_type = class_res["type"]
         clarifying_question = class_res["question"]
         task_subtype = class_res.get("subtype")
@@ -161,13 +201,16 @@ async def interactive_cli():
                     matched_pb = pb
                     break
             if matched_pb:
-                print("\n" + f"{BOLD}{YELLOW}🔥 ACTIVE TROUBLESHOOTING PLAYBOOK: {matched_pb.name.upper()}{RESET}")
-                print(f"{GREY}────────────────────────────────────────────────────────────{RESET}")
-                print(matched_pb.format_first_response())
-                print(f"{GREY}────────────────────────────────────────────────────────────{RESET}\n")
+                playbook_lines = [
+                    f"\n{BOLD}{YELLOW}🔥 ACTIVE TROUBLESHOOTING PLAYBOOK: {matched_pb.name.upper()}{RESET}",
+                    f"{GREY}────────────────────────────────────────────────────────────{RESET}"
+                ]
+                playbook_lines.extend(matched_pb.format_first_response().split("\n"))
+                playbook_lines.append(f"{GREY}────────────────────────────────────────────────────────────{RESET}\n")
+                await print_lines_gradually(playbook_lines, delay=0.01)
 
         # Render checklist progress
-        print_workflow_checklist(session, pending_step.name)
+        await print_workflow_checklist(session, pending_step.name)
 
         print(f"{BOLD}{CYAN}>>> CURRENT STEP: {pending_step.name}{RESET}")
         print(f"{BOLD}Description: {step_spec.description}{RESET}")
@@ -180,19 +223,25 @@ async def interactive_cli():
             print(f"{RED}Input cannot be empty. Try again.{RESET}")
             continue
             
-        # Execute debate loop
-        print(f"\n{BOLD}{GREY}[System] Initiating Agent debate. Analyzing checklist guidelines...{RESET}")
+        # Execute debate loop with spinner
         current_agent[0] = None  # Reset current agent tracker for new debate session
-        debate_res = await execute_step_debate(session.id, user_input, on_token_callback=cli_token_callback)
+        spinner[0] = asyncio.create_task(spinner_task("Initiating Agent debate & preparing checklist"))
+        try:
+            debate_res = await execute_step_debate(session.id, user_input, on_token_callback=cli_token_callback)
+        finally:
+            stop_spinner()
         
-        print("\n" + f"{GREY}────────────────────────────────────────────────────────────{RESET}")
-        print(f"{BOLD}{BLUE}📋 FINAL DEBATE SUMMARY ({pending_step.name}):{RESET}")
-        print(f"{GREY}────────────────────────────────────────────────────────────{RESET}")
-        
+        summary_lines = [
+            "\n" + f"{GREY}────────────────────────────────────────────────────────────{RESET}",
+            f"{BOLD}{BLUE}📋 FINAL DEBATE SUMMARY ({pending_step.name}):{RESET}",
+            f"{GREY}────────────────────────────────────────────────────────────{RESET}"
+        ]
         status_color = GREEN if debate_res['status'] in ["COMPLETED", "SKIPPED"] else YELLOW
-        print(f"⚖️  {BOLD}Decision Status: {status_color}{debate_res['status']}{RESET}")
-        print(f"💬 {BOLD}Feedback: {RESET}{debate_res['feedback']}")
-        print(f"{GREY}────────────────────────────────────────────────────────────{RESET}")
+        summary_lines.append(f"⚖️  {BOLD}Decision Status: {status_color}{debate_res['status']}{RESET}")
+        summary_lines.append(f"💬 {BOLD}Feedback: {RESET}{debate_res['feedback']}")
+        summary_lines.append(f"{GREY}────────────────────────────────────────────────────────────{RESET}")
+        
+        await print_lines_gradually(summary_lines, delay=0.015)
             
     db.close()
 
