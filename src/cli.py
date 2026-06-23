@@ -46,7 +46,7 @@ async def spinner_task(message="Thinking"):
     except asyncio.CancelledError:
         pass
 
-async def print_lines_gradually(lines: list, delay=0.02):
+async def print_lines_gradually(lines: list, delay=0.1):
     """Prints a list of lines slowly one by one to create a smooth, premium typewriter flow."""
     for line in lines:
         print(line)
@@ -69,7 +69,7 @@ async def print_workflow_checklist(session, current_step_name):
             lines.append(f"  {GREY}   [PENDING]   {idx:02d}. {step.name}{RESET}")
     lines.append(f"{GREY}────────────────────────────────────────────────────────────{RESET}\n")
     
-    await print_lines_gradually(lines, delay=0.02)
+    await print_lines_gradually(lines)
 
 async def interactive_cli():
     """Starts an interactive command-line session for the Software Engineering Workflow Coach."""
@@ -207,7 +207,7 @@ async def interactive_cli():
                 ]
                 playbook_lines.extend(matched_pb.format_first_response().split("\n"))
                 playbook_lines.append(f"{GREY}────────────────────────────────────────────────────────────{RESET}\n")
-                await print_lines_gradually(playbook_lines, delay=0.01)
+                await print_lines_gradually(playbook_lines)
 
         # Render checklist progress
         await print_workflow_checklist(session, pending_step.name)
@@ -241,7 +241,7 @@ async def interactive_cli():
         summary_lines.append(f"💬 {BOLD}Feedback: {RESET}{debate_res['feedback']}")
         summary_lines.append(f"{GREY}────────────────────────────────────────────────────────────{RESET}")
         
-        await print_lines_gradually(summary_lines, delay=0.015)
+        await print_lines_gradually(summary_lines)
             
     db.close()
 
