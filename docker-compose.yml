@@ -1,0 +1,19 @@
+services:
+  api:
+    build: .
+    container_name: swe-workflow-coach-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./tests:/app/tests
+    environment:
+      - DATABASE_URL=sqlite:///./data/coach.db
+      - LM_STUDIO_BASE_URL=http://host.docker.internal:1234/v1
+      - LM_STUDIO_API_KEY=lm-studio
+      - LM_STUDIO_MODEL=qwen/qwen3.5-9b
+      - LOG_LEVEL=INFO
+      - LM_STUDIO_TIMEOUT=120.0
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

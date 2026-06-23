@@ -1,0 +1,147 @@
+# Software Engineering Workflow Coach
+
+A production-grade multi-agent coaching system designed to guide developers through rigorous software engineering workflows (TDD, BDD, monitoring, observability, and structured planning). The system takes free-text input, classifies the task, and initiates a debate between specialized AI agents using Microsoft AutoGen (v0.4), FastAPI, and local LLMs (LM Studio).
+
+---
+
+## Architecture and Agents
+
+The team consists of 8 agents orchestrating turn-based checks inside a group chat:
+1. **CoordinatorAgent**: Entry point. Classifies input and routes dialogue.
+2. **BugWorkflowCoach**: Leads BUG workflow steps.
+3. **FeatureWorkflowCoach**: Leads FEATURE workflow steps.
+4. **MeetingWorkflowCoach**: Leads MEETING workflow steps.
+5. **TestStrategyAgent**: Generates pytest skeletons and BDD Gherkin scenarios.
+6. **ObservabilityAgent**: Recommends logging schema, Prometheus metrics, and tracing span setup.
+7. **SkepticCriticAgent**: Constructively challenges decisions and checks edge cases.
+8. **RegretGuardJudge**: Evaluates step completion, updates SQLite state, writes artifacts, and closes steps.
+
+---
+
+## Workflows
+
+### 1. BUG Workflow
+1. Capture & Clarify
+2. Define Failing Behavior
+3. BDD / Acceptance Scenario
+4. Classify & Triage
+5. Monitoring / Observability / Profiling *(Critical)*
+6. Decide: Fix Now or Schedule
+7. Write Failing TDD Test *(Critical)*
+8. Implement Fix
+9. Refactor Safely
+10. Validate & Close *(Critical)*
+11. Communicate Outcome
+
+### 2. FEATURE Workflow
+1. Understand Problem & Goals
+2. Define BDD / Acceptance Criteria *(Critical)*
+3. Shape & De-Scope
+4. Plan Monitoring / Observability / Profiling *(Critical)*
+5. Plan Implementation
+6. Identify TDD Test Boundaries *(Critical)*
+7. Implement in Vertical Slices with TDD
+8. Verify Against Acceptance Criteria *(Critical)*
+9. Launch & Document
+
+### 3. MEETING / PLANNING Workflow
+1. Review Agenda & Prepare
+2. Participate & Drive Decisions *(Critical)*
+3. Update Tickets & Notes *(Critical)*
+4. Adjust Personal Plan
+
+---
+
+## Setup & Running
+
+### Prerequisites
+- Docker and Docker Compose installed.
+- LM Studio or any OpenAI-compatible API running locally.
+
+### Config in LM Studio
+1. Open LM Studio.
+2. Download a tool-calling supported model, such as `qwen2.5-coder-7b-instruct` or similar.
+3. Start the Local Server (port `1234`).
+4. **IMPORTANT**: In the server settings panel, make sure to change the binding address from `127.0.0.1` to `0.0.0.0` (all network interfaces). This is required so that Docker Compose containers can route traffic successfully to the host machine via `host.docker.internal`.
+5. Ensure the system prompts and tool calling features are enabled.
+
+> [!NOTE]
+> The application uses a **5-second connection timeout** for LLM API calls. If the LM Studio server is offline or is binding only to localhost (preventing container connections), the client will time out after 5 seconds and automatically trigger local keyword-based heuristics to allow offline session testing.
+
+---
+
+### Run Application inside Docker Compose
+
+We provide a `Makefile` to simplify all execution steps.
+
+#### 1. Spin up the API Server
+```bash
+make up
+```
+This boots up the FastAPI container in detached mode, exposing the port at `http://localhost:8000`.
+
+#### 2. Run the Interactive Coaching CLI
+```bash
+make run-cli
+```
+This boots up a containerized interactive coaching session right inside your terminal, letting you speak directly to the agent debate team.
+
+#### 3. Run the Test Suites
+```bash
+make test
+```
+Runs the 11 tests (including unit, integration, BDD, and functional debate loops) inside the Docker container.
+
+#### 4. Clean up Container Volumes & Caches
+```bash
+make clean
+```
+Stops the containers and wipes the SQLite storage volume, logs, and caches cleanly.
+
+---
+
+## API Endpoints & Usage
+
+### 1. Start a Session
+**Endpoint**: `POST /api/sessions`  
+**Payload**:
+```json
+{
+  "raw_input": "We have a bug where the login endpoint returns 500 when the password has special characters like % or &."
+}
+```
+**Response**:
+```json
+{
+  "session_id": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+  "type": "BUG",
+  "raw_input": "We have a bug where the login endpoint returns 500 when the password has special characters like % or &.",
+  "current_step": "Capture & Clarify",
+  "next_step": "Define Failing Behavior",
+  "steps": [
+    { "name": "Capture & Clarify", "status": "PENDING" },
+    ...
+  ],
+  "artifacts": [],
+  "metrics": {
+    "session_id": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+    "elapsed_seconds": 0.5,
+    "steps_completed": 0,
+    "skipped_critical_steps": 0
+  }
+}
+```
+
+### 2. Complete a Step
+Provide inputs for the current step. The AI agents will debate and update the state.
+**Endpoint**: `POST /api/sessions/{id}/step`  
+**Payload**:
+```json
+{
+  "user_input": "The bug happens on macOS with python 3.11.2, main branch, version v2.1. The error occurs because the password URL parser fails when parsing raw % characters without escaping."
+}
+```
+
+### 3. Check Session Status
+**Endpoint**: `GET /api/sessions/{id}`  
+Returns full session logs, status of checklist items, and links to created testing/monitoring artifacts.
