@@ -21,6 +21,20 @@ def init_db() -> None:
             conn.execute(text("ALTER TABLE sessions ADD COLUMN subtype VARCHAR"))
     except Exception:
         pass # If already exists or other database, ignore
+    # Gracefully add 'active_mode' column to 'sessions' table if not exists
+    try:
+        from sqlalchemy import text
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE sessions ADD COLUMN active_mode VARCHAR DEFAULT 'PLAN'"))
+    except Exception:
+        pass
+    # Gracefully add 'auto_execute' column to 'sessions' table if not exists
+    try:
+        from sqlalchemy import text
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE sessions ADD COLUMN auto_execute BOOLEAN DEFAULT 0"))
+    except Exception:
+        pass
 
 def get_db():
     """Dependency for obtaining database sessions."""

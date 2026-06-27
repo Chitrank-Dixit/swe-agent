@@ -90,17 +90,17 @@ def test_e2e_functional_bug_workflow(client: TestClient, db_session):
         res_data = response.json()
         assert res_data["steps"][1]["status"] == "SKIPPED"
         assert res_data["steps"][1]["reason"] == "Skipped as duplicate registration is already self-explanatory."
-        assert res_data["current_step"] == "BDD / Acceptance Scenario"
+        assert res_data["current_step"] == "BDD Scenario (where useful)"
 
     # ----------------------------------------------------
     # Step 4: Simulate a critical step generating a test skeleton
     # ----------------------------------------------------
     with patch("src.api.routes.execute_step_debate") as mock_debate:
         # Advance state to Write Failing TDD Test for this simulation
-        repository.update_step_status(db_session, session_id, "BDD / Acceptance Scenario", "COMPLETED")
+        repository.update_step_status(db_session, session_id, "BDD Scenario (where useful)", "COMPLETED")
         repository.update_step_status(db_session, session_id, "Classify & Triage", "COMPLETED")
-        repository.update_step_status(db_session, session_id, "Monitoring / Observability / Profiling", "COMPLETED")
-        repository.update_step_status(db_session, session_id, "Decide: Fix Now or Schedule", "COMPLETED")
+        repository.update_step_status(db_session, session_id, "Monitoring, Observability & Profiling", "COMPLETED")
+        repository.update_step_status(db_session, session_id, "Decision Gate", "COMPLETED")
         
         # Record completions for these 4 advanced steps in the metrics tracker
         metrics_tracker.record_step_completed(session_id)

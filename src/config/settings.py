@@ -1,24 +1,34 @@
 import os
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from src.config.loader import config
 
-class Settings(BaseSettings):
-    # Database
-    DATABASE_URL: str = "sqlite:///./coach.db"
+class Settings:
+    @property
+    def DATABASE_URL(self) -> str:
+        return config.database_url
 
-    # LLM (LM Studio or OpenAI compatible API)
-    LM_STUDIO_BASE_URL: str = "http://localhost:1234/v1"
-    LM_STUDIO_API_KEY: str = "lm-studio"
-    LM_STUDIO_MODEL: str = "qwen/qwen3.5-9b"
-    LM_STUDIO_TIMEOUT: float = 30.0
+    @property
+    def LM_STUDIO_BASE_URL(self) -> str:
+        return config.base_url
 
-    # Logging & Observability
-    LOG_LEVEL: str = "INFO"
-    LOG_FILE_PATH: str = "coach_workflow.log"
+    @property
+    def LM_STUDIO_API_KEY(self) -> str:
+        return "lm-studio"
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore"
-    )
+    @property
+    def LM_STUDIO_MODEL(self) -> str:
+        return config.default_model
+
+    @property
+    def LM_STUDIO_TIMEOUT(self) -> float:
+        return config.timeout
+
+    @property
+    def LOG_LEVEL(self) -> str:
+        return config.log_level
+
+    @property
+    def LOG_FILE_PATH(self) -> str:
+        return config.log_file_path
 
 settings = Settings()
+

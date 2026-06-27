@@ -353,8 +353,8 @@ def find_matching_playbook(raw_input: str) -> Optional[TroubleshootingPlaybook]:
     """Matches developer input to a specific playbook by looking at patterns/keywords."""
     text = raw_input.lower()
     
-    # Pre-check: If input explicitly indicates new feature or planning meeting, bypass playbooks
-    if any(kw in text for kw in ["feature", "meeting", "agenda", "roadmap", "planning"]):
+    # Pre-check: If input explicitly indicates new feature, planning meeting, or general question, bypass playbooks
+    if any(kw in text for kw in ["feature", "meeting", "agenda", "roadmap", "planning", "how to", "how do", "what is", "why does", "explain", "difference"]):
         return None
     
     # 1. Flaky Tests

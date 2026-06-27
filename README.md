@@ -1,6 +1,6 @@
-# Software Engineering Workflow Coach
+# Tark (Software Engineering Workflow Coach)
 
-A production-grade multi-agent coaching system designed to guide developers through rigorous software engineering workflows (TDD, BDD, monitoring, observability, and structured planning). The system takes free-text input, classifies the task, and initiates a debate between specialized AI agents using Microsoft AutoGen (v0.4), FastAPI, and local LLMs (LM Studio).
+Tark (meaning "arguments" or "discussion" in Hindi) is a production-grade multi-agent coaching system designed to guide developers through rigorous software engineering workflows (TDD, BDD, monitoring, observability, and structured planning). The system takes free-text input, classifies the task, and initiates a debate between specialized AI agents using Microsoft AutoGen (v0.4), FastAPI, and local LLMs (LM Studio).
 
 ---
 
@@ -145,3 +145,50 @@ Provide inputs for the current step. The AI agents will debate and update the st
 ### 3. Check Session Status
 **Endpoint**: `GET /api/sessions/{id}`  
 Returns full session logs, status of checklist items, and links to created testing/monitoring artifacts.
+
+---
+
+## Multi-line Input Methods
+
+By default, most terminal emulators on macOS (including Terminal.app, iTerm2, and the VS Code integrated terminal) send a standard carriage return (`\r`) when you press `Shift+Enter`. This causes the interactive CLI to immediately submit your input rather than inserting a newline.
+
+To support developers in all environments, Tark supports three different methods to type multi-line inputs:
+
+### Method 1: Backslash Line Continuation (No Configuration Needed)
+End any line with a backslash (`\`) and press `Enter`. The CLI will automatically strip the backslash and open a newline for you to continue typing.
+Example:
+```
+This is line 1 \
+This is line 2 \
+This is line 3
+```
+
+### Method 2: Alt+Enter / Escape + Enter (No Configuration Needed)
+Press `Alt+Enter` (or press `Esc` then `Enter`) in your terminal to insert a newline.
+
+### Method 3: Native Shift+Enter (Terminal/IDE Configuration Required)
+Configure your terminal emulator to send a unique escape sequence when pressing `Shift+Enter`:
+
+#### VS Code Integrated Terminal (Recommended)
+Add the following keybinding to your `keybindings.json` file (Command Palette: `Preferences: Open Keyboard Shortcuts (JSON)`):
+```json
+{
+    "key": "shift+enter",
+    "command": "workbench.action.terminal.sendSequence",
+    "args": { "text": "\u001b[13;2u" },
+    "when": "terminalFocus"
+}
+```
+
+#### iTerm2
+1. Go to **Settings > Profiles > Keys**.
+2. Click the **+** (plus) icon to add a new key binding.
+3. In **Keyboard Shortcut**, press `Shift+Enter`.
+4. In **Action**, select **Send Escape Sequence**.
+5. In **Esc+**, type: `[13;2u`
+
+#### Native macOS Terminal.app
+1. Go to **Settings > Profiles > Keyboard**.
+2. Click **+** to add a new key configuration.
+3. Select Key: **Return**, Modifier: **Shift**.
+4. Action: **Send Text**, and type `\x1b[13;2u` or map it using the escape character.

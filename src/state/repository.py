@@ -2,12 +2,14 @@ from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from src.state.models import SessionModel, StepModel, ArtifactModel
 
-def create_session(db: Session, raw_input: str, session_type: str, subtype: Optional[str] = None) -> SessionModel:
+def create_session(db: Session, raw_input: str, session_type: str, subtype: Optional[str] = None, active_mode: str = "PLAN") -> SessionModel:
     """Creates a new coaching session."""
     session = SessionModel(
         raw_input=raw_input,
         type=session_type,
-        subtype=subtype
+        subtype=subtype,
+        active_mode=active_mode,
+        auto_execute=(session_type == "GENERAL_ENGINEERING_QUESTION")
     )
     db.add(session)
     db.commit()
@@ -24,6 +26,7 @@ def update_session_type(db: Session, session_id: str, new_type: str, subtype: Op
     if session:
         session.type = new_type
         session.subtype = subtype
+        session.auto_execute = (new_type == "GENERAL_ENGINEERING_QUESTION")
         db.commit()
         db.refresh(session)
     return session
@@ -94,3 +97,13 @@ def create_artifact(
 def get_artifacts(db: Session, session_id: str) -> List[ArtifactModel]:
     """Gets all artifacts created for a session."""
     return db.query(ArtifactModel).filter(ArtifactModel.session_id == session_id).all()
+
+def update_session_mode(db: Session, session_id: str, active_mode: str) -> Optional[SessionModel]:
+    """Updates the active mode (PLAN / BUILD) of a session."""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if session:
+        session.active_mode = active_mode
+        db.commit()
+        db.refresh(session)
+    return session
+

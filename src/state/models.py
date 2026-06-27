@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 import uuid
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, JSON
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey, JSON, Boolean
 from sqlalchemy.orm import relationship
 from src.state.db import Base
 
@@ -14,8 +14,14 @@ class SessionModel(Base):
     type = Column(String, nullable=False)  # BUG, FEATURE, MEETING/PLANNING, UNCERTAIN
     subtype = Column(String, nullable=True)  # e.g., "Performance Investigation"
     raw_input = Column(Text, nullable=False)
+    active_mode = Column(String, default="PLAN", nullable=False)  # PLAN, BUILD
+    auto_execute = Column(Boolean, default=False, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    @property
+    def original_input(self) -> str:
+        return self.raw_input
 
     # Relationships
     steps = relationship("StepModel", back_populates="session", cascade="all, delete-orphan", lazy="joined")

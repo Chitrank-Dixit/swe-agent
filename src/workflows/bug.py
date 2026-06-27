@@ -16,7 +16,7 @@ bug_workflow = BaseWorkflow(
             validation_guidelines="Ensure there is a clear, concise statement of what fails under what condition."
         ),
         WorkflowStep(
-            name="BDD / Acceptance Scenario",
+            name="BDD Scenario (where useful)",
             description="Create Given/When/Then style scenario representing the bug from a user or system perspective.",
             is_critical=False,
             validation_guidelines="Check if a Gherkin-style Given/When/Then scenario was generated or provided."
@@ -28,13 +28,13 @@ bug_workflow = BaseWorkflow(
             validation_guidelines="Ensure severity and priority are explicitly stated."
         ),
         WorkflowStep(
-            name="Monitoring / Observability / Profiling",
+            name="Monitoring, Observability & Profiling",
             description="Suggest logs, metrics, traces, and profiling configurations to detect or prevent this bug in production.",
             is_critical=True,
             validation_guidelines="Verify that concrete observability recommendations (logs, metrics, traces) are documented."
         ),
         WorkflowStep(
-            name="Decide: Fix Now or Schedule",
+            name="Decision Gate",
             description="Determine whether the bug needs immediate hotfixing or can be scheduled in the backlog.",
             is_critical=False,
             validation_guidelines="Verify a clear decision is reached ('Fix Now' or 'Schedule') with context."

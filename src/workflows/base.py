@@ -6,6 +6,7 @@ class SessionType(str, Enum):
     BUG = "BUG"
     FEATURE = "FEATURE"
     MEETING = "MEETING/PLANNING"
+    GENERAL_ENGINEERING_QUESTION = "GENERAL_ENGINEERING_QUESTION"
     UNCERTAIN = "UNCERTAIN"
 
 class StepStatus(str, Enum):
