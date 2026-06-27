@@ -65,14 +65,31 @@ def get_prettified_cwd() -> str:
     return cwd
 
 def print_welcome_box():
-    """Renders a Codex-style startup welcome header card."""
+    """Renders a Codex-style startup welcome header card with a clean outline box."""
     from src.config.loader import config
     prettified_cwd = get_prettified_cwd()
     model = config.default_model or "qwen3.5-9b"
     
-    print(f"\n{BOLD}{CYAN}>_ DevCoach (v1.0.0){RESET}")
-    print(f"{BOLD}model:{RESET}     {YELLOW}{model}{RESET}     {GREY}/model to change{RESET}")
-    print(f"{BOLD}directory:{RESET} {BLUE}{prettified_cwd}{RESET}\n")
+    lines = [
+        f"{BOLD}{CYAN}>_ DevCoach (v1.0.0){RESET}",
+        "",
+        f"{BOLD}model:{RESET}     {YELLOW}{model}{RESET}     {GREY}/model to change{RESET}",
+        f"{BOLD}directory:{RESET} {BLUE}{prettified_cwd}{RESET}"
+    ]
+    
+    # Calculate visible lengths of each line to find the maximum width
+    visible_lengths = [len(re.sub(r'\033\[[0-9;]*m', '', line)) for line in lines]
+    max_len = max(visible_lengths)
+    width = max_len + 2
+    
+    print(f"\n{GREY}┌" + "─" * (width) + f"┐{RESET}")
+    for line in lines:
+        visible_len = len(re.sub(r'\033\[[0-9;]*m', '', line))
+        padding = width - visible_len - 1
+        if padding < 0:
+            padding = 0
+        print(f"{GREY}│{RESET} {line}" + " " * padding + f"{GREY}│{RESET}")
+    print(f"{GREY}└" + "─" * (width) + f"┘{RESET}\n")
 
 def print_prompt_bar(session_or_type, current_step: str = None):
     """Renders a slimmer single-line header and status bar, with no hints."""
