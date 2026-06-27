@@ -1,4 +1,4 @@
-.PHONY: help build build-no-cache up down restart logs clean test run-cli init devcoach tark-swe
+.PHONY: help build build-no-cache up down restart logs clean test run-cli init devcoach tark-swe resume
 
 help:
 	@echo "Available commands (all execution occurs inside Docker Compose):"
@@ -12,6 +12,7 @@ help:
 	@echo "  make test            Run the pytest suite inside the Docker environment"
 	@echo "  make init            Initialize repository (scan structure and generate AGENTS.md)"
 	@echo "  make run-cli         Start the interactive coaching CLI inside the Docker container"
+	@echo "  make resume          Resume previous session. Usage: make resume session=<session_id>"
 	@echo "  make devcoach        Start the interactive coaching CLI (DevCoach)"
 	@echo "  make tark-swe        Alias command to start the interactive coaching CLI"
 
@@ -48,3 +49,10 @@ init:
 
 devcoach: run-cli
 tark-swe: run-cli
+
+resume:
+	@if [ -z "$(session)" ]; then \
+		echo "Usage: make resume session=<session_id>"; \
+		exit 1; \
+	fi
+	docker compose run --rm -e PYTHONPATH=. api python src/cli.py $(session)

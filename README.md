@@ -86,7 +86,18 @@ make run-cli
 ```
 This boots up a containerized interactive coaching session right inside your terminal, letting you speak directly to the agent debate team.
 
-#### 3. Run the Test Suites
+#### 3. Resume an Existing Session
+To resume a previous coaching session, use the `resume` command with the session ID:
+```bash
+make resume session=<session_id>
+```
+Or run directly via python:
+```bash
+python src/cli.py <session_id>
+```
+You can also dynamically switch to or resume another session mid-CLI by using the `/resume <session_id>` command in the input prompts.
+
+#### 4. Run the Test Suites
 ```bash
 make test
 ```

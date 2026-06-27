@@ -338,6 +338,18 @@ async def handle_slash_command(user_input: str, session_id: str, db) -> tuple[bo
         print_prompt_bar(session)
         return True, "continue"
         
+    elif cmd == "/resume":
+        if len(parts) < 2:
+            print(f"\n{BOLD}{RED}⚠️  Please specify a session ID to resume (e.g., /resume <session_id>).{RESET}\n")
+            return True, "continue"
+        target_id = parts[1]
+        target_session = repository.get_session(db, target_id)
+        if not target_session:
+            print(f"\n{BOLD}{RED}⚠️  Session ID '{target_id}' not found in database.{RESET}\n")
+            return True, "continue"
+        print(f"\n{BOLD}{GREEN}✔ Resuming session: {target_id} ({target_session.type}){RESET}\n")
+        return True, f"resume_session:{target_id}"
+        
     elif cmd in ("/bug", "/feature", "/meeting", "/ask"):
         mapping = {
             "/bug": "BUG",
@@ -563,7 +575,7 @@ def init_repository():
     print(f"{GREY}Path: {os.path.abspath(agents_md_path)}{RESET}")
     print(f"\n{BOLD}{YELLOW}IMPORTANT: Please review and edit AGENTS.md to match your project conventions before starting your first session.{RESET}\n")
 
-async def interactive_cli():
+async def interactive_cli(session_id: Optional[str] = None):
     """Starts an interactive command-line session for the Software Engineering Workflow Coach."""
     # Ensure AGENTS.md exists
     if not os.path.exists("AGENTS.md"):
@@ -578,27 +590,6 @@ async def interactive_cli():
     from src.config.loader import config
     config.load_agents_rules()
     
-    # Render startup welcome box
-    print_welcome_box()
-    print(f"{BOLD}{WHITE}Tip: You can describe a {RED}BUG{RESET}{BOLD}{WHITE}, {GREEN}FEATURE{RESET}{BOLD}{WHITE}, {BLUE}MEETING{RESET}{BOLD}{WHITE}, or {YELLOW}GENERAL QUESTION{RESET}{BOLD}{WHITE} in natural language.{RESET}")
-    print(f"{GREY}Hints: Enter=send  ·  Alt+Enter=new line  ·  /help for commands{RESET}\n")
-    
-    # 1. Capture Raw Input
-    raw_input = await get_multiline_input(prompt_symbol="› ", prompt_text="Describe your task (bug, feature, meeting, question):")
-    if not raw_input:
-        print(f"{BOLD}{RED}Task description cannot be empty. Exiting.{RESET}")
-        return
-
-    # Handle slash commands on first input
-    if raw_input.strip().lower() in ("/quit", "/exit", "/q"):
-        print(f"\n{BOLD}{GREEN}👋 Goodbye!{RESET}\n")
-        db.close()
-        return
-    elif raw_input.startswith("/"):
-        print(f"{BOLD}{RED}Slash commands cannot be executed as the initial task description.{RESET}")
-        return
-
-    # 2. Perform Classification
     current_agent = [None]
     spinner = [None]
     spinner_state = {"message": "Processing"}
@@ -612,51 +603,84 @@ async def interactive_cli():
 
     def cli_token_callback(agent: str, token: str):
         spinner_state["message"] = f"[{agent}] is processing"
-
-    # Start spinner and run classification
-    spinner_state["message"] = "Classifying task category"
-    spinner[0] = asyncio.create_task(spinner_task(spinner_state))
-    try:
-        class_res = await classify_input(raw_input, on_token_callback=cli_token_callback)
-    finally:
-        stop_spinner()
-    
-    task_type = class_res["type"]
-    clarifying_question = class_res["question"]
-    task_subtype = class_res.get("subtype")
-    
-    # Handle uncertainty
-    while task_type == "UNCERTAIN":
-        print(f"\n{BOLD}{MAGENTA}💬 [CoordinatorAgent]{RESET}: {clarifying_question}\n")
-        answer = await get_multiline_input(prompt_text="Provide clarifying details:")
-        current_agent[0] = None
         
-        spinner_state["message"] = "Analyzing clarifying response"
+    if session_id:
+        session = repository.get_session(db, session_id)
+        if not session:
+            print(f"\n{BOLD}{RED}⚠️  Session '{session_id}' not found in database. Exiting.{RESET}\n")
+            db.close()
+            return
+            
+        task_type = session.type
+        print(f"\n{BOLD}{GREEN}✔ Resumed existing session: {session.id} ({session.type}){RESET}\n")
+    else:
+        # Render startup welcome box
+        print_welcome_box()
+        print(f"{BOLD}{WHITE}Tip: You can describe a {RED}BUG{RESET}{BOLD}{WHITE}, {GREEN}FEATURE{RESET}{BOLD}{WHITE}, {BLUE}MEETING{RESET}{BOLD}{WHITE}, or {YELLOW}GENERAL QUESTION{RESET}{BOLD}{WHITE} in natural language.{RESET}")
+        print(f"{GREY}Hints: Enter=send  ·  Alt+Enter=new line  ·  /help for commands{RESET}\n")
+        
+        # 1. Capture Raw Input
+        raw_input = await get_multiline_input(prompt_symbol="› ", prompt_text="Describe your task (bug, feature, meeting, question):")
+        if not raw_input:
+            print(f"{BOLD}{RED}Task description cannot be empty. Exiting.{RESET}")
+            db.close()
+            return
+
+        # Handle slash commands on first input
+        if raw_input.strip().lower() in ("/quit", "/exit", "/q"):
+            print(f"\n{BOLD}{GREEN}👋 Goodbye!{RESET}\n")
+            db.close()
+            return
+        elif raw_input.startswith("/"):
+            print(f"{BOLD}{RED}Slash commands cannot be executed as the initial task description.{RESET}")
+            db.close()
+            return
+
+        # 2. Perform Classification
+        # Start spinner and run classification
+        spinner_state["message"] = "Classifying task category"
         spinner[0] = asyncio.create_task(spinner_task(spinner_state))
         try:
-            class_res = await classify_input(answer, on_token_callback=cli_token_callback)
+            class_res = await classify_input(raw_input, on_token_callback=cli_token_callback)
         finally:
             stop_spinner()
-            
+        
         task_type = class_res["type"]
         clarifying_question = class_res["question"]
         task_subtype = class_res.get("subtype")
         
-    print(f"\n\n{BOLD}{GREEN}✔ Resolved task workflow type: {task_type}{RESET}")
-    if task_subtype:
-        print(f"{BOLD}{CYAN}📂 Active playbook path: {task_subtype}{RESET}")
-    
-    # 3. Create Session in SQLite DB
-    session = repository.create_session(db, raw_input=raw_input, session_type=task_type, subtype=task_subtype, active_mode="PLAN")
-    metrics_tracker.start_session(session.id)
-    
-    # Add steps
-    steps_list = get_workflow_steps_list(task_type)
-    repository.add_steps(db, session_id=session.id, step_names=steps_list)
-    
-    print(f"{GREY}Session initialized with ID: {session.id}{RESET}")
-    print(f"{BOLD}Total workflow steps to complete: {len(steps_list)}{RESET}")
-    print(f"{GREY}────────────────────────────────────────────────────────────{RESET}")
+        # Handle uncertainty
+        while task_type == "UNCERTAIN":
+            print(f"\n{BOLD}{MAGENTA}💬 [CoordinatorAgent]{RESET}: {clarifying_question}\n")
+            answer = await get_multiline_input(prompt_text="Provide clarifying details:")
+            current_agent[0] = None
+            
+            spinner_state["message"] = "Analyzing clarifying response"
+            spinner[0] = asyncio.create_task(spinner_task(spinner_state))
+            try:
+                class_res = await classify_input(answer, on_token_callback=cli_token_callback)
+            finally:
+                stop_spinner()
+                
+            task_type = class_res["type"]
+            clarifying_question = class_res["question"]
+            task_subtype = class_res.get("subtype")
+            
+        print(f"\n\n{BOLD}{GREEN}✔ Resolved task workflow type: {task_type}{RESET}")
+        if task_subtype:
+            print(f"{BOLD}{CYAN}📂 Active playbook path: {task_subtype}{RESET}")
+        
+        # 3. Create Session in SQLite DB
+        session = repository.create_session(db, raw_input=raw_input, session_type=task_type, subtype=task_subtype, active_mode="PLAN")
+        metrics_tracker.start_session(session.id)
+        
+        # Add steps
+        steps_list = get_workflow_steps_list(task_type)
+        repository.add_steps(db, session_id=session.id, step_names=steps_list)
+        
+        print(f"{GREY}Session initialized with ID: {session.id}{RESET}")
+        print(f"{BOLD}Total workflow steps to complete: {len(steps_list)}{RESET}")
+        print(f"{GREY}────────────────────────────────────────────────────────────{RESET}")
     
     # 4. Interactive Step Progression Loop
     is_first_general_run = True
@@ -699,6 +723,11 @@ async def interactive_cli():
                     if action == "exit":
                         db.close()
                         return
+                    elif action and action.startswith("resume_session:"):
+                        target_id = action.split(":")[1]
+                        session = repository.get_session(db, target_id)
+                        task_type = session.type
+                        continue
                     continue
 
             # Classify follow-up
@@ -837,6 +866,11 @@ async def interactive_cli():
                         return
                     elif action == "continue":
                         continue
+                    elif action and action.startswith("resume_session:"):
+                        target_id = action.split(":")[1]
+                        session = repository.get_session(db, target_id)
+                        task_type = session.type
+                        continue
                     elif action and action.startswith("new_session:"):
                         target_type = action.split(":")[1]
                         desc = await get_multiline_input(prompt_text=f"Describe your {target_type} task:")
@@ -886,15 +920,16 @@ async def interactive_cli():
 
 def main():
     try:
-        # Handle command-line arguments (e.g. devcoach init)
+        # Handle command-line arguments (e.g. devcoach init, devcoach <session_id>)
         if len(sys.argv) > 1:
-            cmd = sys.argv[1].lower()
-            if cmd == "init":
+            cmd = sys.argv[1]
+            if cmd.lower() == "init":
                 init_repository()
+                sys.exit(0)
             else:
-                print(f"Unknown command: {cmd}")
-                print("Usage: devcoach [init]")
-            sys.exit(0)
+                # Treat as session ID to resume
+                asyncio.run(interactive_cli(session_id=cmd))
+                sys.exit(0)
             
         asyncio.run(interactive_cli())
     except KeyboardInterrupt:
