@@ -99,7 +99,7 @@ async def test_execute_step_debate_offline_fallback(db_session):
     session_id = session.id
     
     with patch("src.agents.team.SessionLocal", return_value=db_session):
-        with patch("autogen_agentchat.teams.RoundRobinGroupChat.run_stream", side_effect=Exception("Connection refused")):
+        with patch("src.agents.team.run_agent_stream", side_effect=Exception("Connection refused")):
             # execute_step_debate will raise exception on team.run_stream, triggering fallback
             # Let's verify it transitions status to COMPLETED
             result = await team.execute_step_debate(session_id, "macOS Catalina environment")

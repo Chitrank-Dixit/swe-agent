@@ -189,6 +189,8 @@ async def print_workflow_checklist(session, current_step_name):
             lines.append(f"  {BOLD}{YELLOW}➡️  [PENDING]   {idx:02d}. {step.name}{RESET}")
         elif step.status == "COMPLETED":
             lines.append(f"  {GREEN}✔  [COMPLETED] {idx:02d}. {step.name}{RESET}")
+        elif step.status == "COMPLETED_WITH_WARNINGS":
+            lines.append(f"  {YELLOW}⚠  [COMPLETED WITH WARNINGS] {idx:02d}. {step.name}{RESET}")
         elif step.status == "SKIPPED":
             lines.append(f"  {GREY}✖  [SKIPPED]   {idx:02d}. {step.name} (Reason: {step.reason}){RESET}")
         else:
@@ -233,8 +235,9 @@ def print_session_status(session):
     for step in session.steps:
         if step.status == "PENDING" and not pending_step:
             pending_step = step.name
-        elif step.status == "COMPLETED":
-            completed_steps.append(step.name)
+        elif step.status in ("COMPLETED", "COMPLETED_WITH_WARNINGS"):
+            suffix = " (with warnings)" if step.status == "COMPLETED_WITH_WARNINGS" else ""
+            completed_steps.append(f"{step.name}{suffix}")
         elif step.status == "SKIPPED":
             skipped_steps.append(f"{step.name} (Reason: {step.reason})")
             
@@ -763,7 +766,12 @@ async def interactive_cli():
             f"{mode_indicator} · {BOLD}{BLUE}FINAL DEBATE SUMMARY ({pending_step.name}):{RESET}",
             f"{GREY}────────────────────────────────────────────────────────────{RESET}"
         ]
-        status_color = GREEN if debate_res['status'] in ["COMPLETED", "SKIPPED"] else YELLOW
+        if debate_res['status'] in ["COMPLETED", "SKIPPED"]:
+            status_color = GREEN
+        elif debate_res['status'] == "COMPLETED_WITH_WARNINGS":
+            status_color = YELLOW
+        else:
+            status_color = RED
         summary_lines.append(f"⚖️  {BOLD}Decision Status: {status_color}{debate_res['status']}{RESET}")
         summary_lines.append(f"💬 {BOLD}Feedback: {RESET}{debate_res['feedback']}")
         summary_lines.append(f"{GREY}────────────────────────────────────────────────────────────{RESET}")

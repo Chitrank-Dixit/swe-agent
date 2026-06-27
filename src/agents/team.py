@@ -1,4 +1,5 @@
 import re
+import asyncio
 from typing import Dict, Any, List, Optional
 from autogen_agentchat.teams import RoundRobinGroupChat
 from autogen_agentchat.conditions import TextMentionTermination, MaxMessageTermination
@@ -25,6 +26,86 @@ from typing import Callable
 from autogen_agentchat.base import TaskResult
 from autogen_agentchat.messages import ModelClientStreamingChunkEvent, TextMessage
 from src.workflows.playbooks import find_matching_playbook
+from src.regret_guard import check_regret_guard
+from src.observability import get_observability_suggestions
+from src.agents.structures import (
+    CoordinatorOutput,
+    CoachOutput,
+    TestStrategyInput,
+    TestStrategyOutput,
+    SkepticInput,
+    SkepticOutput
+)
+import json
+
+def parse_json_from_response(text: str) -> dict:
+    # Remove markdown code fences if present
+    match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL | re.IGNORECASE)
+    cleaned = match.group(1) if match else text
+    cleaned = cleaned.strip()
+    
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        # Fallback search for curly braces
+        brace_match = re.search(r"(\{.*\})", cleaned, re.DOTALL)
+        if brace_match:
+            try:
+                return json.loads(brace_match.group(1))
+            except json.JSONDecodeError:
+                pass
+        raise ValueError(f"Failed to parse JSON from response: {text}")
+
+async def run_agent_stream(agent, prompt: str, agent_name: str, on_token_callback: Optional[Callable[[str, str], None]]) -> str:
+    stream = agent.run_stream(task=prompt)
+    transcript_text = ""
+    async for chunk in stream:
+        if isinstance(chunk, TaskResult):
+            for msg in chunk.messages:
+                if msg.source == agent_name:
+                    transcript_text = msg.content
+        elif isinstance(chunk, ModelClientStreamingChunkEvent):
+            if on_token_callback and chunk.content:
+                on_token_callback(agent_name, chunk.content)
+        elif isinstance(chunk, TextMessage):
+            if chunk.source != "user":
+                transcript_text = chunk.content
+                if on_token_callback:
+                    on_token_callback(agent_name, "[THINKING]")
+    return transcript_text
+
+
+def should_invoke_skeptic(session, coach_out: CoachOutput) -> bool:
+    if session.type not in ("FEATURE", "BUG"):
+        return False
+        
+    all_text = session.raw_input + "\n" + coach_out.recommendations + "\n" + "\n".join(coach_out.actions)
+    files = set(re.findall(r"\b[\w\/\.\-]+\.\w+\b", all_text))
+    source_files = {f for f in files if f.split(".")[-1] in ["py", "md", "json", "js", "ts", "html", "css"]}
+    num_files = len(source_files)
+    
+    code_blocks = re.findall(r"```(?:python|gherkin|feature|json)?\s*(.*?)\s*```", coach_out.recommendations, re.DOTALL | re.IGNORECASE)
+    lines_changed = sum(len(block.splitlines()) for block in code_blocks)
+    
+    estimated_change_size = lines_changed + (num_files * 10)
+    
+    trivial_keywords = ["typo", "comment", "docstring", "formatting", "readme", "trivial", "simple rename"]
+    raw_lower = session.raw_input.lower()
+    is_trivial_fix = any(kw in raw_lower for kw in trivial_keywords)
+    
+    SUBSTANTIAL_THRESHOLD = 20
+    
+    return estimated_change_size > SUBSTANTIAL_THRESHOLD and not is_trivial_fix
+
+
+async def run_agent_stream_buffered(agent, prompt: str, agent_name: str) -> tuple[str, list[str]]:
+    tokens = []
+    def local_callback(source, token):
+        tokens.append(token)
+    res_text = await run_agent_stream(agent, prompt, agent_name, local_callback)
+    return res_text, tokens
+
+
 
 async def classify_input(raw_input: str, on_token_callback: Optional[Callable[[str, str], None]] = None) -> Dict[str, Any]:
     """Classifies developer free-text input using the Coordinator agent."""
@@ -257,31 +338,20 @@ async def execute_step_debate(
                 "transcript": transcript
             }
 
-        judge_client = get_model_client("judge")
         coordinator = create_coordinator_agent(client)
-        test_strategy = create_test_strategy_agent(client)
-        observability = create_observability_agent(client)
         skeptic = create_skeptic_agent(client)
-        judge = create_judge_agent(judge_client)
         
         coach = None
         if session.type == "BUG":
             coach = create_bug_coach_agent(client)
+            test_strategy = create_test_strategy_agent(client)
         elif session.type == "FEATURE":
             coach = create_feature_coach_agent(client)
+            test_strategy = create_test_strategy_agent(client)
         else:
             coach = create_meeting_coach_agent(client)
+            test_strategy = None
             
-        # Build the team
-        participants = [coordinator, coach, test_strategy, observability, skeptic, judge]
-        
-        # Define termination when the Judge finishes (outputs TERMINATE)
-        termination = TextMentionTermination("TERMINATE", sources=["RegretGuardJudge"]) | MaxMessageTermination(max_messages=12)
-        team = RoundRobinGroupChat(
-            participants=participants,
-            termination_condition=termination
-        )
-        
         # Get active playbook details if available
         playbook_guidance = ""
         if session.subtype:
@@ -301,114 +371,275 @@ async def execute_step_debate(
                     f"High-Value Clarifying Questions:\n" + "\n".join(f"- {q}" for q in matched_pb.clarifying_questions) + "\n\n"
                     f"Orchestration Directive: If the developer's response is vague, empty, or 'skip', do NOT block them on missing details. "
                     f"Use the playbook's checklist, hypotheses, and recommended tools to formulate structured guidance. "
-                    f"In this case, the Judge should mark the step as COMPLETED or SKIPPED, summarize the next steps, and terminate. Do not loops back to ask the same questions.\n\n"
+                    f"In this case, the debate team should propose concrete diagnostic steps, summarize the next steps, and finish. Do not loop back to ask the same questions.\n\n"
                 )
 
-        # Prompt details
-        if session.type == "GENERAL_ENGINEERING_QUESTION":
-            task_prompt = (
-                f"Active Session: {session_id}\n"
-                f"Workflow Type: {session.type}\n"
-                f"Current Step: {pending_step.name}\n"
-                f"Step Description: {step_spec.description if step_spec else ''}\n"
-                f"Validation Guidelines: {guidelines}\n\n"
-                f"Developer's Input/Response: \"{user_input}\"\n\n"
-                f"Decision Policy and Instructions:\n"
-                f"1. CoordinatorAgent: State the context of this step and kick off.\n"
-                f"2. {coach.name}: Lead the debate. Address the developer's question. Follow the critical decision policy rules:\n"
-                f"   - If the developer's question/request is clear and narrow, answer directly with high confidence. Do NOT ask clarifying questions.\n"
-                f"   - If it is partially vague, provide the best immediate general answer and ask 1-3 high-value clarifying questions if needed. Do not ask questions just because more context could exist.\n"
-                f"   - For small factual or code-understanding questions, default to a direct answer.\n"
-                f"3. SkepticCriticAgent: Review the answer for correctness, clarity, and verify if clarifying questions are actually necessary or if we should answer directly.\n"
-                f"4. RegretGuardJudge: Review all arguments. Call tools (`update_step_status`, `create_artifact`) to modify session state.\n"
-                f"   - If the advisor answers the question directly without requiring further details, mark the step as COMPLETED.\n"
-                f"   - If the advisor asks clarifying questions because details are absolutely required to avoid a wrong/unsafe answer, keep the status as PENDING.\n"
-                f"   End your message by summarizing status ('STATUS: COMPLETED' or 'STATUS: PENDING') followed by the keyword TERMINATE."
-            )
-        else:
-            task_prompt = (
-                f"Active Session: {session_id}\n"
-                f"Workflow Type: {session.type}\n"
-                f"Current Step: {pending_step.name}\n"
-                f"Step Description: {step_spec.description if step_spec else ''}\n"
-                f"Is Critical Step: {is_critical}\n"
-                f"Validation Guidelines: {guidelines}\n\n"
-                f"{playbook_guidance}"
-                f"Developer's Input/Response: \"{user_input}\"\n\n"
-                f"Checklist Debate Instructions:\n"
-                f"1. CoordinatorAgent: State the context of this step and kick off the debate.\n"
-                f"2. {coach.name}: Lead the debate. Propose recommendations based on the developer's input.\n"
-                f"3. TestStrategyAgent: Suggest BDD scenarios or TDD unit test skeletons if applicable. Create/save skeletons using tools if this is a test step.\n"
-                f"4. ObservabilityAgent: Propose concrete monitoring, metrics, or telemetry plans.\n"
-                f"5. SkepticCriticAgent: Review the debate, identify gaps, challenge shortcuts, and ensure no steps are skipped without reason.\n"
-                f"6. RegretGuardJudge: Review all arguments. Call tools (`update_step_status`, `create_artifact`) to modify session state based on the team's consensus. "
-                f"End your message by summarizing status ('STATUS: COMPLETED', 'STATUS: SKIPPED', or 'STATUS: PENDING') followed by the keyword TERMINATE."
-            )
-        
-        # Run debate
-        log_agent_action(session_id, "System", pending_step.name, "Starting agent debate...")
-        stream = team.run_stream(task=task_prompt)
-        
-        # Build transcript logs and check final status
         transcript = []
-        final_msg = ""
+
+        # 1. RUN COORDINATOR AGENT
+        log_agent_action(session_id, "System", pending_step.name, "Running CoordinatorAgent...")
+        coord_prompt = (
+            f"You are the CoordinatorAgent.\n"
+            f"Given the developer input, active session type, current step, and guidelines, extract the session goal, relevant files, constraints, and a short context summary.\n"
+            f"You MUST respond ONLY with a JSON object matching this schema:\n"
+            f"{{\n"
+            f"  \"workflow_type\": \"BUG\" | \"FEATURE\" | \"MEETING\" | \"GENERAL\",\n"
+            f"  \"goal\": \"string representing the overall goal\",\n"
+            f"  \"relevant_files\": [\"list of relevant file paths\"],\n"
+            f"  \"constraints\": [\"list of constraints\"],\n"
+            f"  \"context_summary\": \"short synopsis of developer prompt and background\"\n"
+            f"}}\n\n"
+            f"Active Session: {session_id}\n"
+            f"Workflow Type: {session.type}\n"
+            f"Current Step: {pending_step.name}\n"
+            f"Developer's Input/Response: \"{user_input}\"\n"
+            f"Validation Guidelines: {guidelines}\n"
+        )
         
-        async for chunk in stream:
-            if isinstance(chunk, TaskResult):
-                for msg in chunk.messages:
-                    if msg.source == "RegretGuardJudge":
-                        final_msg = msg.content
-            elif isinstance(chunk, ModelClientStreamingChunkEvent):
-                if on_token_callback and chunk.content:
-                    on_token_callback(chunk.source, chunk.content)
-            elif isinstance(chunk, TextMessage):
-                if chunk.source != "user":
-                    transcript.append({
-                        "agent": chunk.source,
-                        "content": chunk.content
-                    })
-                    if chunk.source == "RegretGuardJudge":
-                        final_msg = chunk.content
-                    if on_token_callback:
-                        on_token_callback(chunk.source, "[THINKING]")
+        coord_res_text = await run_agent_stream(coordinator, coord_prompt, coordinator.name, on_token_callback)
+        transcript.append({"agent": coordinator.name, "content": coord_res_text})
+        
+        try:
+            coord_out = CoordinatorOutput(**parse_json_from_response(coord_res_text))
+        except Exception as e:
+            log_agent_action(session_id, "System", pending_step.name, f"Coordinator JSON parse failed: {e}. Falling back to default payload.")
+            coord_out = CoordinatorOutput(
+                workflow_type="BUG" if session.type == "BUG" else ("FEATURE" if session.type == "FEATURE" else "MEETING"),
+                goal=user_input,
+                relevant_files=[],
+                constraints=[],
+                context_summary=user_input
+            )
+
+        # 2. RUN WORKFLOW COACH AGENT
+        log_agent_action(session_id, "System", pending_step.name, f"Running {coach.name}...")
+        coach_prompt = (
+            f"You are {coach.name}.\n"
+            f"Lead the debate. Propose recommendations based on the structured Coordinator output, current step name, description, and guidelines.\n"
+            f"You MUST respond ONLY with a JSON object matching this schema:\n"
+            f"{{\n"
+            f"  \"step_name\": \"name of the current step\",\n"
+            f"  \"recommendations\": \"your detailed recommendations, proposals, or troubleshooting guide\",\n"
+            f"  \"actions\": [\"list of concrete actions/steps to perform\"],\n"
+            f"  \"checks\": [\"list of validation checks/rules to verify\"]\n"
+            f"}}\n\n"
+            f"{playbook_guidance}"
+            f"Coordinator Output:\n{json.dumps(coord_out.model_dump(), indent=2)}\n\n"
+            f"Current Step: {pending_step.name}\n"
+            f"Step Description: {step_spec.description if step_spec else ''}\n"
+            f"Validation Guidelines: {guidelines}\n"
+        )
+        
+        coach_res_text = await run_agent_stream(coach, coach_prompt, coach.name, on_token_callback)
+        transcript.append({"agent": coach.name, "content": coach_res_text})
+        
+        try:
+            coach_out = CoachOutput(**parse_json_from_response(coach_res_text))
+        except Exception as e:
+            log_agent_action(session_id, "System", pending_step.name, f"Coach JSON parse failed: {e}. Falling back to default payload.")
+            coach_out = CoachOutput(
+                step_name=pending_step.name,
+                recommendations=coach_res_text,
+                actions=[],
+                checks=[]
+            )
+
+        # 3. CONCURRENT / GATED DEBATE TASKS
+        tasks = []
+        test_task = None
+        skeptic_task = None
+        
+        # Decide if Skeptic should be invoked
+        invoke_skeptic = should_invoke_skeptic(session, coach_out)
+        
+        if test_strategy:
+            code_snippets = re.findall(r"```(?:python)?\s*(.*?)\s*```", user_input + "\n" + coach_out.recommendations, re.DOTALL | re.IGNORECASE)
+            test_in = TestStrategyInput(
+                workflow_type=coord_out.workflow_type,
+                goal=coord_out.goal,
+                code_snippets=code_snippets,
+                constraints=coord_out.constraints
+            )
+            test_prompt = (
+                f"You are TestStrategyAgent.\n"
+                f"Suggest Gherkin BDD scenarios and pytest unit test skeletons based on the structured TestStrategyInput payload.\n"
+                f"You MUST respond ONLY with a JSON object matching this schema:\n"
+                f"{{\n"
+                f"  \"bdd_scenarios\": [\"list of Gherkin scenario strings starting with 'Scenario:'\"],\n"
+                f"  \"pytest_skeletons\": [\"list of pytest unit test skeleton functions/classes (raw python code strings)\"]\n"
+                f"}}\n\n"
+                f"TestStrategyInput:\n{json.dumps(test_in.model_dump(), indent=2)}\n"
+            )
+            log_agent_action(session_id, "System", pending_step.name, "Scheduling TestStrategyAgent...")
+            test_task = asyncio.create_task(run_agent_stream_buffered(test_strategy, test_prompt, test_strategy.name))
+            tasks.append(test_task)
+            
+        if invoke_skeptic:
+            summary_of_changes = coach_out.recommendations + "\nActions:\n" + "\n".join(f"- {a}" for a in coach_out.actions)
+            key_snippets = re.findall(r"```(?:python)?\s*(.*?)\s*```", coach_out.recommendations, re.DOTALL | re.IGNORECASE)
+            
+            skeptic_in = SkepticInput(
+                goal=coord_out.goal,
+                summary_of_changes=summary_of_changes,
+                key_snippets=key_snippets,
+                constraints=coord_out.constraints
+            )
+            
+            skeptic_prompt = (
+                f"You are SkepticCriticAgent.\n"
+                f"Critique the proposed changes, identify gaps, challenge shortcuts, and identify missing assumptions based on the structured SkepticInput payload.\n"
+                f"You MUST respond ONLY with a JSON object matching this schema:\n"
+                f"{{\n"
+                f"  \"critique\": \"your detailed critical review\",\n"
+                f"  \"gaps\": [\"list of missing items or logic gaps\"],\n"
+                f"  \"challenges\": [\"list of challenges/shortcuts to avoid\"]\n"
+                f"}}\n\n"
+                f"SkepticInput:\n{json.dumps(skeptic_in.model_dump(), indent=2)}\n"
+            )
+            log_agent_action(session_id, "System", pending_step.name, "Scheduling SkepticCriticAgent...")
+            skeptic_task = asyncio.create_task(run_agent_stream_buffered(skeptic, skeptic_prompt, skeptic.name))
+            tasks.append(skeptic_task)
+            
+        # Run in parallel
+        if tasks:
+            log_agent_action(session_id, "System", pending_step.name, f"Executing {len(tasks)} debate helper tasks in parallel...")
+            await asyncio.gather(*tasks)
+            
+        # Process Test Strategy output
+        test_out = None
+        if test_task:
+            test_res_text, test_tokens = test_task.result()
+            transcript.append({"agent": test_strategy.name, "content": test_res_text})
+            
+            if on_token_callback:
+                for token in test_tokens:
+                    on_token_callback(test_strategy.name, token)
                     
-        # Parse final status from Judge message
-        status_match = re.search(r"STATUS:\s*(COMPLETED|SKIPPED|PENDING)", final_msg, re.IGNORECASE)
-        final_status = status_match.group(1).upper() if status_match else "PENDING"
+            try:
+                test_out = TestStrategyOutput(**parse_json_from_response(test_res_text))
+            except Exception as e:
+                log_agent_action(session_id, "System", pending_step.name, f"Test Strategy JSON parse failed: {e}. Falling back to default.")
+                test_out = TestStrategyOutput(bdd_scenarios=[], pytest_skeletons=[])
+                
+            if test_out.bdd_scenarios:
+                bdd_content = "\n\n".join(test_out.bdd_scenarios)
+                repository.create_artifact(
+                    db,
+                    session_id=session_id,
+                    name="acceptance.feature",
+                    artifact_type="BDD_SCENARIO",
+                    content=bdd_content.strip()
+                )
+            if test_out.pytest_skeletons:
+                skeleton_content = "\n\n".join(test_out.pytest_skeletons)
+                repository.create_artifact(
+                    db,
+                    session_id=session_id,
+                    name="test_skeleton.py",
+                    artifact_type="TEST_SKELETON",
+                    content=skeleton_content.strip()
+                )
+
+        # Process Skeptic output
+        skeptic_out = None
+        if skeptic_task:
+            skeptic_res_text, skeptic_tokens = skeptic_task.result()
+            transcript.append({"agent": skeptic.name, "content": skeptic_res_text})
+            
+            if on_token_callback:
+                for token in skeptic_tokens:
+                    on_token_callback(skeptic.name, token)
+                    
+            try:
+                skeptic_out = SkepticOutput(**parse_json_from_response(skeptic_res_text))
+            except Exception as e:
+                log_agent_action(session_id, "System", pending_step.name, f"Skeptic JSON parse failed: {e}. Falling back to default.")
+                skeptic_out = SkepticOutput(critique=skeptic_res_text, gaps=[], challenges=[])
+
+        # Observability suggestions
+        observability_suggestions = []
+        is_observability_step = pending_step.name in ["Monitoring, Observability & Profiling", "Monitoring & Observability Plan"]
+        if is_observability_step:
+            from src.cli import scan_repository
+            scan_data = scan_repository()
+            context = {
+                "languages": scan_data.get("languages", []),
+                "dependencies": scan_data.get("dependencies", []),
+                "raw_input": session.raw_input
+            }
+            observability_suggestions = get_observability_suggestions(context)
+            
+            obs_plan_content = "### Observability Plan\n\n" + "\n".join(f"- {s}" for s in observability_suggestions)
+            repository.create_artifact(
+                db,
+                session_id=session_id,
+                name="observability_plan.md",
+                artifact_type="MONITORING_PLAN",
+                content=obs_plan_content
+            )
+
+        db.commit()
+        db.expire_all()
+        session = repository.get_session(db, session_id)
+
+        # Call Regret Guard rules
+        warnings = check_regret_guard(session, pending_step)
+        final_status = "COMPLETED_WITH_WARNINGS" if warnings else "COMPLETED"
         
-        # Verify and force-update status in database if the Judge agent didn't invoke the tool
-        # but outputted a completion or skip status.
+        # Verify and force-update status in database
         db_step = db.query(repository.StepModel).filter(
             repository.StepModel.session_id == session_id,
             repository.StepModel.name == pending_step.name
         ).first()
         
-        if db_step and db_step.status == "PENDING" and final_status in ["COMPLETED", "SKIPPED"]:
-            reason = None
-            if final_status == "SKIPPED":
-                reason_match = re.search(r"reason:\s*(.*)", final_msg, re.IGNORECASE)
-                reason = reason_match.group(1).strip() if reason_match else f"Skipped via debate: {user_input}"
-            
+        if db_step and db_step.status == "PENDING":
             repository.update_step_status(
                 db,
                 session_id=session_id,
                 step_name=pending_step.name,
-                status=final_status,
-                reason=reason
+                status=final_status
             )
         
         # Update metrics tracker
-        if final_status == "COMPLETED":
-            metrics_tracker.record_step_completed(session_id)
-        elif final_status == "SKIPPED" and is_critical:
-            metrics_tracker.record_critical_step_skipped(session_id)
+        metrics_tracker.record_step_completed(session_id)
             
-        # Return state
+        # Compile feedback response
+        feedback_parts = []
+        feedback_parts.append(f"### 📋 Coach's Proposals:\n{coach_out.recommendations}\n")
+        if coach_out.actions:
+            feedback_parts.append(f"#### Planned Actions:\n" + "\n".join(f"- {a}" for a in coach_out.actions) + "\n")
+            
+        if test_out:
+            test_content = ""
+            if test_out.bdd_scenarios:
+                test_content += "#### BDD Scenarios:\n" + "\n".join(f"- {s}" for s in test_out.bdd_scenarios) + "\n"
+            if test_out.pytest_skeletons:
+                test_content += "#### Pytest Skeletons:\n" + "\n".join(f"```python\n{s.strip()}\n```" for s in test_out.pytest_skeletons) + "\n"
+            if test_content:
+                feedback_parts.append(f"### 🧪 Test Strategy:\n{test_content}\n")
+                
+        feedback_parts.append(f"### ⚖️ Skeptic's Critique:\n{skeptic_out.critique}\n")
+        if skeptic_out.gaps or skeptic_out.challenges:
+            gap_content = ""
+            if skeptic_out.gaps:
+                gap_content += "#### Identified Gaps:\n" + "\n".join(f"- {g}" for g in skeptic_out.gaps) + "\n"
+            if skeptic_out.challenges:
+                gap_content += "#### Skeptic's Challenges:\n" + "\n".join(f"- {c}" for c in skeptic_out.challenges) + "\n"
+            feedback_parts.append(f"{gap_content}\n")
+        
+        feedback_text = "\n".join(feedback_parts)
+        
+        if observability_suggestions:
+            feedback_text += f"\n### 📊 NOTES: Observability Recommendations (Deterministic):\n" + "\n".join(f"- {s}" for s in observability_suggestions) + "\n"
+            
+        if warnings:
+            feedback_text += f"\n### ⚠️ Regret Guard Warnings:\n" + "\n".join(f"- {w}" for w in warnings) + "\n"
+            
         return {
             "session_id": session_id,
             "current_step": pending_step.name,
             "status": final_status,
-            "feedback": final_msg.replace("TERMINATE", "").strip(),
+            "feedback": feedback_text.strip(),
             "transcript": transcript
         }
         
