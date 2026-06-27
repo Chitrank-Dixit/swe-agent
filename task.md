@@ -12,3 +12,14 @@
 - [x] Run & verify testing
   - [x] Create unit tests in `tests/unit/test_parallel_orchestration.py`
   - [x] Run all unit, integration, and BDD tests
+
+# Phase 4 Checklist: Fix GENERAL_ENGINEERING_QUESTION workflow path
+- [x] Orchestrator short-circuiting logic
+  - [x] Add auto_execute database column alteration on startup in db.py and SessionModel definition
+  - [x] Automatically set auto_execute = True for General Engineering Questions in create_session & update_session_type
+  - [x] Short-circuit Address Question step using session.original_input directly as user input, bypassing interactive prompts
+- [x] Suppress checklist UI for GENERAL session type
+- [x] Clean completion message rules (show Answer complete vs No answer given based on step status, suppress Congratulations)
+- [x] Guard skip commands with y/N warnings for GENERAL session Address Question steps
+- [x] Update General Advisor system and default prompts to emphasize direct execution and format constraints
+- [x] Write regression unit tests in tests/unit/test_general_question.py and verify correctness

@@ -8,7 +8,8 @@ def create_session(db: Session, raw_input: str, session_type: str, subtype: Opti
         raw_input=raw_input,
         type=session_type,
         subtype=subtype,
-        active_mode=active_mode
+        active_mode=active_mode,
+        auto_execute=(session_type == "GENERAL_ENGINEERING_QUESTION")
     )
     db.add(session)
     db.commit()
@@ -25,6 +26,7 @@ def update_session_type(db: Session, session_id: str, new_type: str, subtype: Op
     if session:
         session.type = new_type
         session.subtype = subtype
+        session.auto_execute = (new_type == "GENERAL_ENGINEERING_QUESTION")
         db.commit()
         db.refresh(session)
     return session

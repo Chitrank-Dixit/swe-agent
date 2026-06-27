@@ -355,8 +355,8 @@ async def handle_slash_command(user_input: str, session_id: str, db) -> tuple[bo
             return True, "continue"
             
         if step_name == "Address Question":
-            confirm = input(f"{BOLD}{YELLOW}⚠️  Skipping this step will close the session without an answer. Continue? (y/N): {RESET}").strip().lower()
-            if confirm not in ("y", "yes"):
+            confirm = input(f"{BOLD}{YELLOW}⚠️ Skipping this step will close the session without an answer. Continue? (y/N){RESET}").strip().lower()
+            if confirm != "y":
                 print(f"\n{BOLD}{GREEN}Skip cancelled. Returning to the step.{RESET}\n")
                 return True, "continue"
                 
@@ -633,17 +633,22 @@ async def interactive_cli():
                  
         if not pending_step:
             metrics = metrics_tracker.get_session_metrics(session.id)
-            completed_steps = metrics['steps_completed']
-            if completed_steps == 0:
-                print(f"\n{BOLD}{YELLOW}⚠️  Session closed. No steps were completed.{RESET}\n")
-            elif session.type == "GENERAL_ENGINEERING_QUESTION":
-                print(f"\n{BOLD}{GREEN}✅ Answer complete.{RESET}\n")
-            elif completed_steps > 0 and any(art.content.strip() for art in session.artifacts):
-                print("\n" + f"{BOLD}{GREEN}╔══════════════════════════════════════════════════════════╗")
-                print(f"║ 🎉 CONGRATULATIONS! ALL WORKFLOW STEPS ARE COMPLETED.    ║")
-                print(f"╚══════════════════════════════════════════════════════════╝{RESET}")
+            if session.type == "GENERAL_ENGINEERING_QUESTION":
+                address_step = next((s for s in session.steps if s.name == "Address Question"), None)
+                if address_step and address_step.status == "SKIPPED":
+                    print(f"\n{BOLD}{YELLOW}⚠️ Session closed. No answer was given.{RESET}\n")
+                else:
+                    print(f"\n{BOLD}{GREEN}✅ Answer complete.{RESET}\n")
             else:
-                print(f"\n{BOLD}{YELLOW}⚠️  Session closed. No steps were completed.{RESET}\n")
+                completed_steps = metrics['steps_completed']
+                if completed_steps == 0:
+                    print(f"\n{BOLD}{YELLOW}⚠️  Session closed. No steps were completed.{RESET}\n")
+                elif completed_steps > 0 and any(art.content.strip() for art in session.artifacts):
+                    print("\n" + f"{BOLD}{GREEN}╔══════════════════════════════════════════════════════════╗")
+                    print(f"║ 🎉 CONGRATULATIONS! ALL WORKFLOW STEPS ARE COMPLETED.    ║")
+                    print(f"╚══════════════════════════════════════════════════════════╝{RESET}")
+                else:
+                    print(f"\n{BOLD}{YELLOW}⚠️  Session closed. No steps were completed.{RESET}\n")
             print(f"🏆 {BOLD}Steps Completed: {metrics['steps_completed']}{RESET}")
             print(f"⚠️  {BOLD}Skipped Critical Steps: {metrics['skipped_critical_steps']}{RESET}")
             print(f"⏱️  {BOLD}Time Elapsed: {metrics['elapsed_seconds']} seconds{RESET}")
@@ -702,12 +707,13 @@ async def interactive_cli():
         is_general_short_circuit = (
             session.type == "GENERAL_ENGINEERING_QUESTION"
             and pending_step.name == "Address Question"
-            and is_first_general_run
+            and getattr(session, "auto_execute", False)
         )
 
         if is_general_short_circuit:
-            user_input = session.raw_input
-            is_first_general_run = False
+            user_input = session.original_input
+            session.auto_execute = False
+            db.commit()
         else:
             print(f"{BOLD}{CYAN}>>> CURRENT STEP: {pending_step.name}{RESET}")
             print(f"{BOLD}Description: {step_spec.description}{RESET}")
@@ -741,13 +747,12 @@ async def interactive_cli():
                         steps_list = get_workflow_steps_list(task_type)
                         repository.add_steps(db, session_id=session.id, step_names=steps_list)
                         print(f"\n{BOLD}{GREEN}✔ Switch successful. New {target_type} session started with ID: {session.id}{RESET}\n")
-                        is_first_general_run = True
                         continue
             
             # Skip Guard for 'Address Question' step
             if pending_step.name == "Address Question" and user_input.strip().lower().startswith("skip"):
-                confirm = input(f"{BOLD}{YELLOW}⚠️  Skipping this step will close the session without an answer. Continue? (y/N): {RESET}").strip().lower()
-                if confirm not in ("y", "yes"):
+                confirm = input(f"{BOLD}{YELLOW}⚠️ Skipping this step will close the session without an answer. Continue? (y/N){RESET}").strip().lower()
+                if confirm != "y":
                     print(f"\n{BOLD}{GREEN}Skip cancelled. Returning to the step.{RESET}\n")
                     continue
             
