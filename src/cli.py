@@ -287,7 +287,11 @@ async def handle_slash_command(user_input: str, session_id: str, db) -> tuple[bo
     if not session:
         return False, None
 
-    if cmd == "/plan":
+    if cmd in ("/quit", "/exit", "/q"):
+        print(f"\n{BOLD}{GREEN}👋 Goodbye!{RESET}\n")
+        return True, "exit"
+
+    elif cmd == "/plan":
         repository.update_session_mode(db, session_id, "PLAN")
         print(f"\n{BOLD}{YELLOW}📋 Mode switched to PLAN MODE{RESET}\n")
         return True, "continue"
@@ -552,7 +556,11 @@ async def interactive_cli():
         return
 
     # Handle slash commands on first input
-    if raw_input.startswith("/"):
+    if raw_input.strip().lower() in ("/quit", "/exit", "/q"):
+        print(f"\n{BOLD}{GREEN}👋 Goodbye!{RESET}\n")
+        db.close()
+        return
+    elif raw_input.startswith("/"):
         print(f"{BOLD}{RED}Slash commands cannot be executed as the initial task description.{RESET}")
         return
 
@@ -632,27 +640,90 @@ async def interactive_cli():
                 break
                  
         if not pending_step:
-            metrics = metrics_tracker.get_session_metrics(session.id)
             if session.type == "GENERAL_ENGINEERING_QUESTION":
                 address_step = next((s for s in session.steps if s.name == "Address Question"), None)
                 if address_step and address_step.status == "SKIPPED":
                     print(f"\n{BOLD}{YELLOW}⚠️ Session closed. No answer was given.{RESET}\n")
                 else:
                     print(f"\n{BOLD}{GREEN}✅ Answer complete.{RESET}\n")
+                print(f"{BOLD}{WHITE}Waiting for your next input... (/quit to exit){RESET}")
             else:
-                completed_steps = metrics['steps_completed']
-                if completed_steps == 0:
-                    print(f"\n{BOLD}{YELLOW}⚠️  Session closed. No steps were completed.{RESET}\n")
-                elif completed_steps > 0 and any(art.content.strip() for art in session.artifacts):
-                    print("\n" + f"{BOLD}{GREEN}╔══════════════════════════════════════════════════════════╗")
-                    print(f"║ 🎉 CONGRATULATIONS! ALL WORKFLOW STEPS ARE COMPLETED.    ║")
-                    print(f"╚══════════════════════════════════════════════════════════╝{RESET}")
+                print(f"\n{BOLD}{GREEN}✅ Workflow complete.{RESET}\n")
+                print(f"{BOLD}{WHITE}You can ask a follow-up, start a new task, or type /quit to exit.{RESET}")
+            
+            print_prompt_bar(session, "Follow-up")
+            follow_up_input = await get_multiline_input()
+            if not follow_up_input:
+                continue
+                
+            # Intercept slash commands / exit commands
+            if follow_up_input.strip().lower() in ("/quit", "/exit", "/q"):
+                print(f"\n{BOLD}{GREEN}👋 Goodbye!{RESET}\n")
+                db.close()
+                return
+                
+            if follow_up_input.startswith("/"):
+                is_cmd, action = await handle_slash_command(follow_up_input, session.id, db)
+                if is_cmd:
+                    if action == "exit":
+                        db.close()
+                        return
+                    continue
+
+            # Classify follow-up
+            spinner_state["message"] = "Analyzing input"
+            spinner[0] = asyncio.create_task(spinner_task(spinner_state))
+            try:
+                class_res = await classify_input(follow_up_input, on_token_callback=cli_token_callback)
+            finally:
+                stop_spinner()
+                
+            new_type = class_res["type"]
+            new_subtype = class_res.get("subtype")
+            
+            # Reset session context based on classification
+            if new_type in ("BUG", "FEATURE", "MEETING/PLANNING", "MEETING"):
+                # Clean delete old steps
+                db.query(repository.StepModel).filter(repository.StepModel.session_id == session.id).delete()
+                
+                session.type = "MEETING" if new_type == "MEETING/PLANNING" else new_type
+                session.raw_input = follow_up_input
+                session.subtype = new_subtype
+                session.auto_execute = False
+                db.commit()
+                
+                steps_list = get_workflow_steps_list(session.type)
+                repository.add_steps(db, session_id=session.id, step_names=steps_list)
+                print(f"\n{BOLD}{GREEN}✔ Task started: {session.type}{RESET}\n")
+                continue
+            elif new_type == "GENERAL_ENGINEERING_QUESTION":
+                # Clean delete old steps
+                db.query(repository.StepModel).filter(repository.StepModel.session_id == session.id).delete()
+                
+                session.type = "GENERAL_ENGINEERING_QUESTION"
+                session.raw_input = follow_up_input
+                session.subtype = None
+                session.auto_execute = True
+                db.commit()
+                
+                steps_list = get_workflow_steps_list("GENERAL_ENGINEERING_QUESTION")
+                repository.add_steps(db, session_id=session.id, step_names=steps_list)
+                continue
+            else:
+                # Uncertain / same workflow follow-up
+                if session.type == "GENERAL_ENGINEERING_QUESTION":
+                    # For general, any follow-up goes directly to General Advisor
+                    db.query(repository.StepModel).filter(repository.StepModel.session_id == session.id).delete()
+                    session.raw_input = follow_up_input
+                    session.auto_execute = True
+                    db.commit()
+                    steps_list = get_workflow_steps_list("GENERAL_ENGINEERING_QUESTION")
+                    repository.add_steps(db, session_id=session.id, step_names=steps_list)
+                    continue
                 else:
-                    print(f"\n{BOLD}{YELLOW}⚠️  Session closed. No steps were completed.{RESET}\n")
-            print(f"🏆 {BOLD}Steps Completed: {metrics['steps_completed']}{RESET}")
-            print(f"⚠️  {BOLD}Skipped Critical Steps: {metrics['skipped_critical_steps']}{RESET}")
-            print(f"⏱️  {BOLD}Time Elapsed: {metrics['elapsed_seconds']} seconds{RESET}")
-            break
+                    # Alert the user they should start a new task
+                    print(f"\n{BOLD}{YELLOW}⚠️ Workflow complete. Please start a new task (e.g. '/bug', '/feature', or ask a question).{RESET}\n")
+                    continue
             
         step_spec = get_workflow_by_type(session.type).get_step(pending_step.name)
         
@@ -733,7 +804,10 @@ async def interactive_cli():
             if user_input.startswith("/"):
                 is_cmd, action = await handle_slash_command(user_input, session.id, db)
                 if is_cmd:
-                    if action == "continue":
+                    if action == "exit":
+                        db.close()
+                        return
+                    elif action == "continue":
                         continue
                     elif action and action.startswith("new_session:"):
                         target_type = action.split(":")[1]

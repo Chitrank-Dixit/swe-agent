@@ -23,3 +23,11 @@
 - [x] Guard skip commands with y/N warnings for GENERAL session Address Question steps
 - [x] Update General Advisor system and default prompts to emphasize direct execution and format constraints
 - [x] Write regression unit tests in tests/unit/test_general_question.py and verify correctness
+# Phase 5 Checklist: Persistent Interactive Sessions
+- [x] Implement exit commands (/quit, /exit, /q) at start of interactive_cli
+- [x] Update completion and follow-up wait prompts when pending_step is None
+- [x] Implement command dispatching and classification of new tasks inside the wait state
+- [x] Reuse the same session_id and update workflow steps when task-switching or follow-ups occur
+- [x] Create tests/unit/test_persistent_session.py to verify persistence, command exits, and session ID reuse
+- [x] Verify unit, integration, and BDD test suites pass
+

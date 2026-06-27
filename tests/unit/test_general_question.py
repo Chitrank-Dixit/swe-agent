@@ -66,7 +66,9 @@ async def test_general_question_short_circuit(db_session):
         call_count += 1
         if call_count == 1:
             return "What is a decorator?"
-        raise AssertionError("get_multiline_input should not be called again in short-circuit!")
+        elif call_count == 2:
+            return "/quit"
+        raise AssertionError("get_multiline_input called too many times!")
 
     mock_print_checklist = MagicMock()
 
@@ -145,8 +147,11 @@ async def test_general_question_text_skip_guard(db_session):
             return "Explain context managers"
         elif call_count == 2:
             return "skip"
-        else:
+        elif call_count == 3:
             return "my actual query"
+        elif call_count == 4:
+            return "/quit"
+        raise AssertionError("get_multiline_input called too many times!")
 
     debate_calls = []
     async def mock_execute_debate(session_id, user_input, on_token_callback=None):
@@ -234,7 +239,9 @@ async def test_general_question_with_code_snippets(db_session):
         call_count += 1
         if call_count == 1:
             return "How does this function work?\n```python\ndef add(a, b):\n    return a + b\n```"
-        raise AssertionError("get_multiline_input should not be called again in short-circuit!")
+        elif call_count == 2:
+            return "/quit"
+        raise AssertionError("get_multiline_input called too many times!")
 
     async def mock_execute_debate(session_id, user_input, on_token_callback=None):
         assert "def add(a, b):" in user_input
@@ -273,7 +280,9 @@ async def test_general_question_without_code(db_session):
         call_count += 1
         if call_count == 1:
             return "What is the time complexity of bubble sort?"
-        raise AssertionError("get_multiline_input should not be called again in short-circuit!")
+        elif call_count == 2:
+            return "/quit"
+        raise AssertionError("get_multiline_input called too many times!")
 
     async def mock_execute_debate(session_id, user_input, on_token_callback=None):
         assert user_input == "What is the time complexity of bubble sort?"
@@ -314,7 +323,9 @@ async def test_general_question_skip_warning_and_message(db_session):
             return "Explain Python metaclasses"
         elif call_count == 2:
             return "skip"
-        raise AssertionError("Loop should exit after confirm='y'")
+        elif call_count == 3:
+            return "/quit"
+        raise AssertionError("get_multiline_input called too many times!")
 
     async def mock_execute_debate(session_id, user_input, on_token_callback=None):
         if user_input.strip().lower().startswith("skip"):
