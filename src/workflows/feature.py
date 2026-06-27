@@ -10,7 +10,7 @@ feature_workflow = BaseWorkflow(
             validation_guidelines="Verify that success metrics, constraints, and target audience are written down."
         ),
         WorkflowStep(
-            name="Define BDD / Acceptance Criteria",
+            name="BDD / Acceptance Criteria",
             description="Produce Gherkin-style Given/When/Then scenarios defining what is 'done'.",
             is_critical=True,
             validation_guidelines="Ensure that detailed Gherkin Given/When/Then BDD scenario files or artifacts are created."
@@ -22,25 +22,25 @@ feature_workflow = BaseWorkflow(
             validation_guidelines="Ensure there is an MVP outline and a list of descope/non-goals."
         ),
         WorkflowStep(
-            name="Plan Monitoring / Observability / Profiling",
+            name="Monitoring & Observability Plan",
             description="Outline logging schema, custom metrics (SLAs/SLIs), tracing context, and potential profile bottlenecks.",
             is_critical=True,
             validation_guidelines="Verify that concrete metric names, log events, and trace-ids are structured in an artifact."
         ),
         WorkflowStep(
-            name="Plan Implementation",
+            name="Implementation Plan",
             description="Break the MVP into development tasks (backend, frontend, DB, infra, docs).",
             is_critical=False,
             validation_guidelines="Verify a breakdown of tasks with clear deliverables exists."
         ),
         WorkflowStep(
-            name="Identify TDD Test Boundaries",
+            name="TDD Test Boundaries",
             description="Identify modules, classes, and edge cases to implement via strict Test-Driven Development.",
             is_critical=True,
             validation_guidelines="Ensure boundaries and specific pytest test skeleton names are identified and written."
         ),
         WorkflowStep(
-            name="Implement in Vertical Slices with TDD",
+            name="Implement in Slices",
             description="Develop component by component using Red-Green-Refactor loop.",
             is_critical=False,
             validation_guidelines="Verify that TDD code structure or skeleton implementations are produced."

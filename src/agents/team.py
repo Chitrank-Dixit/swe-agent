@@ -11,11 +11,13 @@ from src.agents.factory import (
     create_test_strategy_agent,
     create_observability_agent,
     create_skeptic_agent,
-    create_judge_agent
+    create_judge_agent,
+    create_general_advisor_agent
 )
 from src.workflows.bug import bug_workflow
 from src.workflows.feature import feature_workflow
 from src.workflows.meeting import meeting_workflow
+from src.workflows.general import general_workflow
 from src.state.db import SessionLocal
 from src.state import repository
 from src.logging.logger import log_agent_action, metrics_tracker
@@ -34,17 +36,18 @@ async def classify_input(raw_input: str, on_token_callback: Optional[Callable[[s
             return {"type": "BUG", "subtype": playbook.name, "question": None}
 
     try:
-        client = get_model_client()
+        client = get_model_client("default")
         coordinator = create_coordinator_agent(client)
         
         prompt = (
-            f"You must classify the following developer input into one of three workflow types:\n"
+            f"You must classify the following developer input into one of four workflow types:\n"
             f"- BUG: if it describes unexpected behavior, error logs, crashes, or incorrect system outputs.\n"
             f"- FEATURE: if it describes a new request, user story, enhancement, or extension of existing functionality.\n"
-            f"- MEETING/PLANNING: if it describes an upcoming meeting, agenda prep, ticket sorting, or adjusting personal task boards.\n\n"
+            f"- MEETING/PLANNING: if it describes an upcoming meeting, agenda prep, ticket sorting, or adjusting personal task boards.\n"
+            f"- GENERAL_ENGINEERING_QUESTION: if it is a general question, factual inquiry, explanation of code, syntax question, or software engineering concept.\n\n"
             f"Developer Input: \"{raw_input}\"\n\n"
             f"If you are certain of the category, output exactly:\n"
-            f"CLASSIFICATION: <BUG | FEATURE | MEETING/PLANNING>\n\n"
+            f"CLASSIFICATION: <BUG | FEATURE | MEETING/PLANNING | GENERAL_ENGINEERING_QUESTION>\n\n"
             f"If you are uncertain, you must output:\n"
             f"CLASSIFICATION: UNCERTAIN\n"
             f"QUESTION: <your clarifying question to the user to help classify the input>"
@@ -66,12 +69,12 @@ async def classify_input(raw_input: str, on_token_callback: Optional[Callable[[s
                         on_token_callback(chunk.source, "[THINKING]")
         
         # Check classification
-        class_match = re.search(r"CLASSIFICATION:\s*(BUG|FEATURE|MEETING/PLANNING|UNCERTAIN)", last_msg, re.IGNORECASE)
+        class_match = re.search(r"CLASSIFICATION:\s*(BUG|FEATURE|MEETING/PLANNING|GENERAL_ENGINEERING_QUESTION|UNCERTAIN)", last_msg, re.IGNORECASE)
         if class_match:
             class_type = class_match.group(1).upper()
             if class_type == "UNCERTAIN":
                 q_match = re.search(r"QUESTION:\s*(.*)", last_msg, re.DOTALL | re.IGNORECASE)
-                question = q_match.group(1).strip() if q_match else "Could you provide more context on whether this is a bug, a new feature, or a planning topic?"
+                question = q_match.group(1).strip() if q_match else "Could you provide more context on whether this is a bug, a new feature, a planning topic, or a general question?"
                 return {"type": "UNCERTAIN", "question": question}
             return {"type": class_type, "question": None}
             
@@ -82,10 +85,12 @@ async def classify_input(raw_input: str, on_token_callback: Optional[Callable[[s
             return {"type": "FEATURE", "question": None}
         elif "meeting" in last_msg.lower() or "planning" in last_msg.lower():
             return {"type": "MEETING/PLANNING", "question": None}
+        elif "question" in last_msg.lower() or "how" in last_msg.lower() or "what" in last_msg.lower() or "explain" in last_msg.lower():
+            return {"type": "GENERAL_ENGINEERING_QUESTION", "question": None}
             
         return {
             "type": "UNCERTAIN",
-            "question": "I'm not sure if this is a BUG, FEATURE, or MEETING/PLANNING. Could you clarify what you're working on?"
+            "question": "I'm not sure if this is a BUG, FEATURE, MEETING/PLANNING, or GENERAL_ENGINEERING_QUESTION. Could you clarify what you're working on?"
         }
     except Exception as e:
         # Robust fallback if LLM is offline
@@ -110,12 +115,21 @@ async def classify_input(raw_input: str, on_token_callback: Optional[Callable[[s
         # Meeting/planning keywords
         meeting_keywords = ["meeting", "planning", "agenda", "roadmap", "ticket", "calendar", "retrospective", "notes"]
         
+        # General engineering question keywords
+        question_keywords = [
+            "question", "how to", "what is", "why does", "explain", 
+            "difference", "concept", "syntax", "optimize", 
+            "package", "import", "library", "framework", "tutorial"
+        ]
+        
         if any(kw in raw_lower for kw in meeting_keywords):
             return {"type": "MEETING/PLANNING", "question": None}
         elif any(kw in raw_lower for kw in feature_keywords):
             return {"type": "FEATURE", "question": None}
         elif any(kw in raw_lower for kw in bug_keywords):
             return {"type": "BUG", "question": None}
+        elif "?" in raw_lower or any(kw in raw_lower for kw in question_keywords):
+            return {"type": "GENERAL_ENGINEERING_QUESTION", "question": None}
             
         return {"type": "MEETING/PLANNING", "question": None}
 
@@ -155,6 +169,8 @@ async def execute_step_debate(
             wf = feature_workflow
         elif session.type == "MEETING/PLANNING":
             wf = meeting_workflow
+        elif session.type == "GENERAL_ENGINEERING_QUESTION":
+            wf = general_workflow
             
         step_spec = wf.get_step(pending_step.name) if wf else None
         guidelines = step_spec.validation_guidelines if step_spec else "Verify the developer provides clear input."
@@ -198,12 +214,55 @@ async def execute_step_debate(
             }
         
         # Instantiate agents
-        client = get_model_client()
+        client = get_model_client("default")
+
+        if session.type == "GENERAL_ENGINEERING_QUESTION":
+            coach = create_general_advisor_agent(client)
+            log_agent_action(session_id, "System", pending_step.name, "Routing directly to GeneralEngineeringAdvisor...")
+            stream = coach.run_stream(task=user_input)
+            
+            transcript = []
+            final_msg = ""
+            
+            async for chunk in stream:
+                if isinstance(chunk, TaskResult):
+                    for msg in chunk.messages:
+                        if msg.source == coach.name:
+                            final_msg = msg.content
+                elif isinstance(chunk, ModelClientStreamingChunkEvent):
+                    if on_token_callback and chunk.content:
+                        on_token_callback(chunk.source, chunk.content)
+                elif isinstance(chunk, TextMessage):
+                    if chunk.source != "user":
+                        transcript.append({
+                            "agent": chunk.source,
+                            "content": chunk.content
+                        })
+                        if chunk.source == coach.name:
+                            final_msg = chunk.content
+            
+            repository.update_step_status(
+                db,
+                session_id=session_id,
+                step_name=pending_step.name,
+                status="COMPLETED"
+            )
+            metrics_tracker.record_step_completed(session_id)
+            
+            return {
+                "session_id": session_id,
+                "current_step": pending_step.name,
+                "status": "COMPLETED",
+                "feedback": final_msg.strip(),
+                "transcript": transcript
+            }
+
+        judge_client = get_model_client("judge")
         coordinator = create_coordinator_agent(client)
         test_strategy = create_test_strategy_agent(client)
         observability = create_observability_agent(client)
         skeptic = create_skeptic_agent(client)
-        judge = create_judge_agent(client)
+        judge = create_judge_agent(judge_client)
         
         coach = None
         if session.type == "BUG":
@@ -246,24 +305,45 @@ async def execute_step_debate(
                 )
 
         # Prompt details
-        task_prompt = (
-            f"Active Session: {session_id}\n"
-            f"Workflow Type: {session.type}\n"
-            f"Current Step: {pending_step.name}\n"
-            f"Step Description: {step_spec.description if step_spec else ''}\n"
-            f"Is Critical Step: {is_critical}\n"
-            f"Validation Guidelines: {guidelines}\n\n"
-            f"{playbook_guidance}"
-            f"Developer's Input/Response: \"{user_input}\"\n\n"
-            f"Checklist Debate Instructions:\n"
-            f"1. CoordinatorAgent: State the context of this step and kick off the debate.\n"
-            f"2. {coach.name}: Lead the debate. Propose recommendations based on the developer's input.\n"
-            f"3. TestStrategyAgent: Suggest BDD scenarios or TDD unit test skeletons if applicable. Create/save skeletons using tools if this is a test step.\n"
-            f"4. ObservabilityAgent: Propose concrete monitoring, metrics, or telemetry plans.\n"
-            f"5. SkepticCriticAgent: Review the debate, identify gaps, challenge shortcuts, and ensure no steps are skipped without reason.\n"
-            f"6. RegretGuardJudge: Review all arguments. Call tools (`update_step_status`, `create_artifact`) to modify session state based on the team's consensus. "
-            f"End your message by summarizing status ('STATUS: COMPLETED', 'STATUS: SKIPPED', or 'STATUS: PENDING') followed by the keyword TERMINATE."
-        )
+        if session.type == "GENERAL_ENGINEERING_QUESTION":
+            task_prompt = (
+                f"Active Session: {session_id}\n"
+                f"Workflow Type: {session.type}\n"
+                f"Current Step: {pending_step.name}\n"
+                f"Step Description: {step_spec.description if step_spec else ''}\n"
+                f"Validation Guidelines: {guidelines}\n\n"
+                f"Developer's Input/Response: \"{user_input}\"\n\n"
+                f"Decision Policy and Instructions:\n"
+                f"1. CoordinatorAgent: State the context of this step and kick off.\n"
+                f"2. {coach.name}: Lead the debate. Address the developer's question. Follow the critical decision policy rules:\n"
+                f"   - If the developer's question/request is clear and narrow, answer directly with high confidence. Do NOT ask clarifying questions.\n"
+                f"   - If it is partially vague, provide the best immediate general answer and ask 1-3 high-value clarifying questions if needed. Do not ask questions just because more context could exist.\n"
+                f"   - For small factual or code-understanding questions, default to a direct answer.\n"
+                f"3. SkepticCriticAgent: Review the answer for correctness, clarity, and verify if clarifying questions are actually necessary or if we should answer directly.\n"
+                f"4. RegretGuardJudge: Review all arguments. Call tools (`update_step_status`, `create_artifact`) to modify session state.\n"
+                f"   - If the advisor answers the question directly without requiring further details, mark the step as COMPLETED.\n"
+                f"   - If the advisor asks clarifying questions because details are absolutely required to avoid a wrong/unsafe answer, keep the status as PENDING.\n"
+                f"   End your message by summarizing status ('STATUS: COMPLETED' or 'STATUS: PENDING') followed by the keyword TERMINATE."
+            )
+        else:
+            task_prompt = (
+                f"Active Session: {session_id}\n"
+                f"Workflow Type: {session.type}\n"
+                f"Current Step: {pending_step.name}\n"
+                f"Step Description: {step_spec.description if step_spec else ''}\n"
+                f"Is Critical Step: {is_critical}\n"
+                f"Validation Guidelines: {guidelines}\n\n"
+                f"{playbook_guidance}"
+                f"Developer's Input/Response: \"{user_input}\"\n\n"
+                f"Checklist Debate Instructions:\n"
+                f"1. CoordinatorAgent: State the context of this step and kick off the debate.\n"
+                f"2. {coach.name}: Lead the debate. Propose recommendations based on the developer's input.\n"
+                f"3. TestStrategyAgent: Suggest BDD scenarios or TDD unit test skeletons if applicable. Create/save skeletons using tools if this is a test step.\n"
+                f"4. ObservabilityAgent: Propose concrete monitoring, metrics, or telemetry plans.\n"
+                f"5. SkepticCriticAgent: Review the debate, identify gaps, challenge shortcuts, and ensure no steps are skipped without reason.\n"
+                f"6. RegretGuardJudge: Review all arguments. Call tools (`update_step_status`, `create_artifact`) to modify session state based on the team's consensus. "
+                f"End your message by summarizing status ('STATUS: COMPLETED', 'STATUS: SKIPPED', or 'STATUS: PENDING') followed by the keyword TERMINATE."
+            )
         
         # Run debate
         log_agent_action(session_id, "System", pending_step.name, "Starting agent debate...")
@@ -349,7 +429,20 @@ async def execute_step_debate(
             "session_id": session_id,
             "current_step": pending_step.name if 'pending_step' in locals() and pending_step else "Unknown",
             "status": "COMPLETED",
-            "feedback": f"Step processed successfully (LLM debate offline mode). Detail: {e}",
+            "feedback": (
+                "### SUMMARY\n"
+                f"- Step processed successfully (LLM debate offline fallback mode).\n\n"
+                "### PLAN\n"
+                "- Heuristic step validation checks performed.\n"
+                "- Auto-completing step state in database.\n\n"
+                "### STEPS TO RUN NOW\n"
+                "1. Review the workflow checklist progress above.\n"
+                "2. Provide inputs for the next pending step.\n\n"
+                "### WHAT TO SEND BACK\n"
+                "- Paste your inputs for the next step.\n\n"
+                "### NOTES\n"
+                f"- The local LLM engine is offline or timed out: {e}."
+            ),
             "transcript": [{"agent": "System", "content": f"LLM offline. Auto-completing step."}]
         }
     finally:

@@ -8,6 +8,8 @@ services:
       - ./src:/app/src
       - ./data:/app/data
       - ./tests:/app/tests
+      - ./AGENTS.md:/app/AGENTS.md
+      - ./devcoach.json:/app/devcoach.json
     environment:
       - DATABASE_URL=sqlite:///./data/coach.db
       - LM_STUDIO_BASE_URL=http://host.docker.internal:1234/v1

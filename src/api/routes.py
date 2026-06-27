@@ -8,6 +8,7 @@ from src.agents.team import classify_input, execute_step_debate
 from src.workflows.bug import bug_workflow
 from src.workflows.feature import feature_workflow
 from src.workflows.meeting import meeting_workflow
+from src.workflows.general import general_workflow
 from src.logging.logger import metrics_tracker
 
 router = APIRouter()
@@ -74,6 +75,8 @@ async def create_new_session(payload: SessionCreateRequest, db: Session = Depend
         steps_list = feature_workflow.get_step_names()
     elif session_type == "MEETING/PLANNING":
         steps_list = meeting_workflow.get_step_names()
+    elif session_type == "GENERAL_ENGINEERING_QUESTION":
+        steps_list = general_workflow.get_step_names()
         
     if steps_list:
         repository.add_steps(db, session_id=session.id, step_names=steps_list)
@@ -136,6 +139,8 @@ async def process_session_step(id: str, payload: SessionStepRequest, db: Session
                 steps_list = feature_workflow.get_step_names()
             elif resolved["type"] == "MEETING/PLANNING":
                 steps_list = meeting_workflow.get_step_names()
+            elif resolved["type"] == "GENERAL_ENGINEERING_QUESTION":
+                steps_list = general_workflow.get_step_names()
             
             repository.add_steps(db, session_id=session.id, step_names=steps_list)
             # Re-fetch session

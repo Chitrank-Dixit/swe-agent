@@ -1,0 +1,2 @@
+[console_scripts]
+tark-swe = src.cli:main

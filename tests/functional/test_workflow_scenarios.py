@@ -6,12 +6,17 @@ from src.agents import team
 from src.state.db import SessionLocal
 
 def is_lm_studio_online() -> bool:
-    """Helper to detect if the local LM Studio server is active."""
+    """Helper to detect if the local LM Studio server is active and has models loaded."""
+    import os
+    if os.environ.get("RUN_LIVE_TESTS") != "true":
+        return False
     for host in ["localhost", "host.docker.internal"]:
         try:
-            response = httpx.get(f"http://{host}:1234/v1/models", timeout=1.5)
+            response = httpx.get(f"http://{host}:1234/v1/models", timeout=1.0)
             if response.status_code == 200:
-                return True
+                data = response.json()
+                if isinstance(data, dict) and "data" in data and len(data["data"]) > 0:
+                    return True
         except Exception:
             continue
     return False
@@ -84,10 +89,10 @@ async def test_live_qwen_meeting_scenario(db_session):
         from src.workflows.meeting import meeting_workflow
         repository.add_steps(db_session, session_id=session.id, step_names=meeting_workflow.get_step_names())
         
-        # 2. Review Agenda & Prepare step debate
+        # 2. Prepare step debate
         user_input = "Goal is to align on Q3 goals, discuss load testing results showing 500ms API latency, and assign owners."
         debate_res = await team.execute_step_debate(session.id, user_input)
         
         assert debate_res["session_id"] == session.id
-        assert debate_res["current_step"] == "Review Agenda & Prepare"
+        assert debate_res["current_step"] == "Prepare"
         assert debate_res["status"] in ["COMPLETED", "PENDING"]

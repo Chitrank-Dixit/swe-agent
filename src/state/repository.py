@@ -2,12 +2,13 @@ from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from src.state.models import SessionModel, StepModel, ArtifactModel
 
-def create_session(db: Session, raw_input: str, session_type: str, subtype: Optional[str] = None) -> SessionModel:
+def create_session(db: Session, raw_input: str, session_type: str, subtype: Optional[str] = None, active_mode: str = "PLAN") -> SessionModel:
     """Creates a new coaching session."""
     session = SessionModel(
         raw_input=raw_input,
         type=session_type,
-        subtype=subtype
+        subtype=subtype,
+        active_mode=active_mode
     )
     db.add(session)
     db.commit()
@@ -94,3 +95,13 @@ def create_artifact(
 def get_artifacts(db: Session, session_id: str) -> List[ArtifactModel]:
     """Gets all artifacts created for a session."""
     return db.query(ArtifactModel).filter(ArtifactModel.session_id == session_id).all()
+
+def update_session_mode(db: Session, session_id: str, active_mode: str) -> Optional[SessionModel]:
+    """Updates the active mode (PLAN / BUILD) of a session."""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if session:
+        session.active_mode = active_mode
+        db.commit()
+        db.refresh(session)
+    return session
+

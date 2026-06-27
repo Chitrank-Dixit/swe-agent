@@ -14,6 +14,7 @@ class SessionModel(Base):
     type = Column(String, nullable=False)  # BUG, FEATURE, MEETING/PLANNING, UNCERTAIN
     subtype = Column(String, nullable=True)  # e.g., "Performance Investigation"
     raw_input = Column(Text, nullable=False)
+    active_mode = Column(String, default="PLAN", nullable=False)  # PLAN, BUILD
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 

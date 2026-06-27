@@ -1,0 +1,6 @@
+Skill: Code Analysis
+Description: Best practices for explaining python code, identifying complexity, and proposing refactoring patterns.
+Guidelines:
+1. Explain the code clearly, breaking down functions and inputs.
+2. Note any potential time/space complexity bottlenecks (e.g. O(N^2) loops).
+3. Recommend modern standard library utilities (e.g. collections, itertools) where appropriate.

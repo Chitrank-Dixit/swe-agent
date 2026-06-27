@@ -35,7 +35,7 @@ def test_database_tools_integration(db_session):
     """Verifies that the agent tools get_session_state, update_step_status, and create_artifact execute correctly against the database."""
     # 1. Setup session
     session = repository.create_session(db_session, raw_input="Refactor auth service.", session_type="FEATURE")
-    repository.add_steps(db_session, session.id, ["Understand Problem & Goals", "Define BDD / Acceptance Criteria"])
+    repository.add_steps(db_session, session.id, ["Understand Problem & Goals", "BDD / Acceptance Criteria"])
     
     # Patch the SessionLocal used by tools to point to our test db_session
     with patch("src.agents.tools.SessionLocal", return_value=db_session):
@@ -106,7 +106,7 @@ async def test_execute_step_debate_offline_fallback(db_session):
             
             assert result["session_id"] == session_id
             assert result["status"] == "COMPLETED"
-            assert "LLM debate offline mode" in result["feedback"]
+            assert "LLM debate offline" in result["feedback"]
             
             # Verify DB step is updated
             step = db_session.query(repository.StepModel).filter(
@@ -141,7 +141,7 @@ async def test_execute_step_debate_skip_non_critical(db_session):
 async def test_execute_step_debate_skip_critical_no_reason(db_session):
     """Verifies that skipping a critical step without a reason is blocked."""
     session = repository.create_session(db_session, raw_input="Bug in login", session_type="BUG")
-    repository.add_steps(db_session, session.id, ["Monitoring / Observability / Profiling"]) # critical step
+    repository.add_steps(db_session, session.id, ["Monitoring, Observability & Profiling"]) # critical step
     session_id = session.id
     
     with patch("src.agents.team.SessionLocal", return_value=db_session):
@@ -154,7 +154,7 @@ async def test_execute_step_debate_skip_critical_no_reason(db_session):
         # Verify DB step is still PENDING
         step = db_session.query(repository.StepModel).filter(
             repository.StepModel.session_id == session_id,
-            repository.StepModel.name == "Monitoring / Observability / Profiling"
+            repository.StepModel.name == "Monitoring, Observability & Profiling"
         ).first()
         assert step.status == "PENDING"
 
@@ -162,7 +162,7 @@ async def test_execute_step_debate_skip_critical_no_reason(db_session):
 async def test_execute_step_debate_skip_critical_with_reason(db_session):
     """Verifies that skipping a critical step with a reason succeeds immediately."""
     session = repository.create_session(db_session, raw_input="Bug in login", session_type="BUG")
-    repository.add_steps(db_session, session.id, ["Monitoring / Observability / Profiling"]) # critical step
+    repository.add_steps(db_session, session.id, ["Monitoring, Observability & Profiling"]) # critical step
     session_id = session.id
     
     with patch("src.agents.team.SessionLocal", return_value=db_session):
@@ -175,7 +175,7 @@ async def test_execute_step_debate_skip_critical_with_reason(db_session):
         # Verify DB step is updated with reason
         step = db_session.query(repository.StepModel).filter(
             repository.StepModel.session_id == session_id,
-            repository.StepModel.name == "Monitoring / Observability / Profiling"
+            repository.StepModel.name == "Monitoring, Observability & Profiling"
         ).first()
         assert step.status == "SKIPPED"
         assert "we already setup logging in the main gateway" in step.reason.lower()
