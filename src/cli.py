@@ -65,29 +65,19 @@ def get_prettified_cwd() -> str:
     return cwd
 
 def print_welcome_box():
-    """Renders a Codex-style startup welcome box with dynamically padded interior space."""
-    width = 58
-    prettified_cwd = get_prettified_cwd()
+    """Renders a Codex-style startup welcome header card."""
     from src.config.loader import config
+    prettified_cwd = get_prettified_cwd()
+    model = config.default_model or "qwen3.5-9b"
     
-    lines = [
-        f"{BOLD}{CYAN}>_ DevCoach (v1.0.0){RESET}",
-        "",
-        f"{BOLD}model:{RESET}     {YELLOW}{config.default_model}{RESET}",
-        f"{BOLD}directory:{RESET} {BLUE}{prettified_cwd}{RESET}"
-    ]
-    
-    print(f"\n{GREY}┌" + "─" * (width + 2) + f"┐{RESET}")
-    for line in lines:
-        visible_len = len(re.sub(r'\033\[[0-9;]*m', '', line))
-        padding = width - visible_len
-        print(f"{GREY}│{RESET} {line}" + " " * padding + f" {GREY}│{RESET}")
-    print(f"{GREY}└" + "─" * (width + 2) + f"┘{RESET}")
+    print(f"\n{BOLD}{CYAN}>_ DevCoach (v1.0.0){RESET}")
+    print(f"{BOLD}model:{RESET}     {YELLOW}{model}{RESET}     {GREY}/model to change{RESET}")
+    print(f"{BOLD}directory:{RESET} {BLUE}{prettified_cwd}{RESET}\n")
 
 def print_prompt_bar(session_or_type, current_step: str = None):
-    """Renders a Codex-style status/metadata bar directly preceding input prompt."""
-    prettified_cwd = get_prettified_cwd()
+    """Renders a slimmer single-line header and status bar, with no hints."""
     from src.config.loader import config
+    prettified_cwd = get_prettified_cwd()
     
     active_mode = "PLAN"
     if hasattr(session_or_type, "active_mode"):
@@ -97,24 +87,47 @@ def print_prompt_bar(session_or_type, current_step: str = None):
         wf_type = str(session_or_type)
         
     mode_indicator = f"{YELLOW}PLAN{RESET}" if active_mode == "PLAN" else f"{GREEN}BUILD{RESET}"
+    model = config.default_model or "qwen3.5-9b"
     
-    if wf_type == "BUG":
-        type_str = f"{RED}🔴 BUG{RESET}"
-    elif wf_type == "FEATURE":
-        type_str = f"{GREEN}🟢 FEATURE{RESET}"
-    elif wf_type in ("MEETING/PLANNING", "MEETING"):
-        type_str = f"{BLUE}🔵 MEETING/PLANNING{RESET}"
-    elif wf_type == "GENERAL_ENGINEERING_QUESTION":
-        type_str = f"{YELLOW}🟡 GENERAL QUESTION{RESET}"
-    else:
-        type_str = f"{MAGENTA}🤖 DevCoach{RESET}"
+    header_str = f"{BOLD}{CYAN}DevCoach v1.0.0{RESET}  {GREY}│{RESET}  {BOLD}Mode: {mode_indicator}{RESET}  {GREY}│{RESET}  {BOLD}Model: {model}{RESET}  {GREY}│{RESET}  {BOLD}Dir: {prettified_cwd}{RESET}"
+    if current_step:
+        header_str += f"  {GREY}│{RESET}  {BOLD}{CYAN}Step: {current_step}{RESET}"
         
-    step_str = f" · {BOLD}{CYAN}{current_step}{RESET}" if current_step else ""
-    
-    print(f"{BOLD}{type_str}{step_str} · {mode_indicator} · {GREY}{config.default_model} · {prettified_cwd}{RESET}")
+    print(f"\n{header_str}")
+    print(f"{GREY}───────────────────────────────────────────────────────────────────────────────{RESET}")
 
-async def get_multiline_input(prompt_symbol: str = "> ") -> str:
-    """Reads multiline input where Enter submits immediately, and Shift+Enter inserts a new line."""
+def print_boxed_response(title: str, text: str):
+    """Renders response as flat card text with indentation and bullets instead of borders."""
+    print(f"\n{BOLD}{CYAN}# {title}{RESET}")
+    print(f"{GREY}───────────────────────────────────────────────────────────────────────────────{RESET}\n")
+    
+    lines = text.split("\n")
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            print()
+            continue
+            
+        # Parse markdown headings/sections
+        if stripped.startswith("#"):
+            heading = stripped.lstrip("#").strip()
+            # Strip emojis
+            heading = re.sub(r'[\u2600-\u27BF]|[\u1F300-\u1F9FF]|[\u1F600-\u1F64F]|[\u1F680-\u1F6FF]', '', heading).strip()
+            print(f"{BOLD}{WHITE}{heading.upper()}:{RESET}")
+        elif stripped.startswith("- ") or stripped.startswith("* "):
+            content = stripped[2:].strip()
+            print(f"  • {content}")
+        elif stripped.startswith("↳"):
+            print(f"    {stripped}")
+        else:
+            print(f"  {line}")
+    print()
+
+async def get_multiline_input(prompt_symbol: str = "› ", prompt_text: str = None) -> str:
+    """Reads multiline input, presenting it cleanly without boxes."""
+    if prompt_text:
+        print(f"{BOLD}{WHITE}{prompt_text}{RESET}")
+        
     kb = KeyBindings()
 
     @kb.add("enter")
@@ -147,10 +160,15 @@ async def get_multiline_input(prompt_symbol: str = "> ") -> str:
         if buf.text.strip():
             buf.validate_and_handle()
 
-    prompt_text = f"{BOLD}{CYAN}{prompt_symbol}{RESET}"
-    session = PromptSession(key_bindings=kb, multiline=True)
+    prompt_text_formatted = f"{BOLD}{CYAN}{prompt_symbol}{RESET}"
+    session = PromptSession(
+        key_bindings=kb, 
+        multiline=True,
+        prompt_continuation=lambda width, line_number, wrap_around: "  "
+    )
     try:
-        user_input = await session.prompt_async(ANSI(prompt_text))
+        user_input = await session.prompt_async(ANSI(prompt_text_formatted))
+        print()
         return user_input.strip()
     except EOFError:
         return ""
@@ -293,12 +311,14 @@ async def handle_slash_command(user_input: str, session_id: str, db) -> tuple[bo
 
     elif cmd == "/plan":
         repository.update_session_mode(db, session_id, "PLAN")
-        print(f"\n{BOLD}{YELLOW}📋 Mode switched to PLAN MODE{RESET}\n")
+        session = repository.get_session(db, session_id)
+        print_prompt_bar(session)
         return True, "continue"
         
     elif cmd == "/build":
         repository.update_session_mode(db, session_id, "BUILD")
-        print(f"\n{BOLD}{GREEN}🔨 Mode switched to BUILD MODE{RESET}\n")
+        session = repository.get_session(db, session_id)
+        print_prompt_bar(session)
         return True, "continue"
         
     elif cmd in ("/bug", "/feature", "/meeting", "/ask"):
@@ -543,14 +563,11 @@ async def interactive_cli():
     
     # Render startup welcome box
     print_welcome_box()
-    print(f"{BOLD}Modes: Identify a {RED}BUG{RESET}{BOLD}, plan a {GREEN}FEATURE{RESET}{BOLD}, capture {BLUE}MEETING/PLANNING{RESET}{BOLD} notes, or ask a {YELLOW}GENERAL QUESTION{RESET}{BOLD}.{RESET}")
-    print(f"{GREY}  ⌨  Enter = submit  |  \\ + Enter = new line  |  Alt+Enter = new line  |  Ctrl+D = submit now{RESET}\n")
+    print(f"{BOLD}{WHITE}Tip: You can describe a {RED}BUG{RESET}{BOLD}{WHITE}, {GREEN}FEATURE{RESET}{BOLD}{WHITE}, {BLUE}MEETING{RESET}{BOLD}{WHITE}, or {YELLOW}GENERAL QUESTION{RESET}{BOLD}{WHITE} in natural language.{RESET}")
+    print(f"{GREY}Hints: Enter=send  ·  Alt+Enter=new line  ·  /help for commands{RESET}\n")
     
     # 1. Capture Raw Input
-    print_prompt_bar("INITIAL")
-    print(f"{BOLD}{WHITE}Describe your task (e.g., bug error details, feature idea, agenda, engineering question):{RESET}")
-    print(f"{GREY}  Enter = submit  |  \\ + Enter = new line  |  Alt+Enter = new line{RESET}")
-    raw_input = await get_multiline_input()
+    raw_input = await get_multiline_input(prompt_symbol="› ", prompt_text="Describe your task (bug, feature, meeting, question):")
     if not raw_input:
         print(f"{BOLD}{RED}Task description cannot be empty. Exiting.{RESET}")
         return
@@ -593,9 +610,8 @@ async def interactive_cli():
     
     # Handle uncertainty
     while task_type == "UNCERTAIN":
-        print(f"\n{BOLD}{MAGENTA}💬 [CoordinatorAgent]{RESET}: {clarifying_question}")
-        print_prompt_bar("INITIAL")
-        answer = await get_multiline_input()
+        print(f"\n{BOLD}{MAGENTA}💬 [CoordinatorAgent]{RESET}: {clarifying_question}\n")
+        answer = await get_multiline_input(prompt_text="Provide clarifying details:")
         current_agent[0] = None
         
         spinner_state["message"] = "Analyzing clarifying response"
@@ -646,13 +662,11 @@ async def interactive_cli():
                     print(f"\n{BOLD}{YELLOW}⚠️ Session closed. No answer was given.{RESET}\n")
                 else:
                     print(f"\n{BOLD}{GREEN}✅ Answer complete.{RESET}\n")
-                print(f"{BOLD}{WHITE}Waiting for your next input... (/quit to exit){RESET}")
             else:
                 print(f"\n{BOLD}{GREEN}✅ Workflow complete.{RESET}\n")
-                print(f"{BOLD}{WHITE}You can ask a follow-up, start a new task, or type /quit to exit.{RESET}")
             
-            print_prompt_bar(session, "Follow-up")
-            follow_up_input = await get_multiline_input()
+            print(f"{BOLD}{CYAN}Ready for next input…  {RESET}{GREY}(/quit to exit){RESET}")
+            follow_up_input = await get_multiline_input(prompt_symbol="› ")
             if not follow_up_input:
                 continue
                 
@@ -791,11 +805,8 @@ async def interactive_cli():
             if step_spec.is_critical:
                 print(f"⚠️  {BOLD}{RED}CRITICAL STEP: Cannot be skipped without providing a reason.{RESET}")
             
-            print()
             print_prompt_bar(session, pending_step.name)
-            print(f"{BOLD}{WHITE}Enter your inputs for this step (or type 'skip' to bypass, or use slash command):{RESET}")
-            print(f"{GREY}  Enter = submit  |  \\ + Enter = new line  |  Alt+Enter = new line  |  Slash commands available{RESET}")
-            user_input = await get_multiline_input()
+            user_input = await get_multiline_input(prompt_text="Enter your inputs for this step (or 'skip' to bypass):")
             if not user_input:
                 print(f"{RED}Input cannot be empty. Try again.{RESET}")
                 continue
@@ -811,8 +822,7 @@ async def interactive_cli():
                         continue
                     elif action and action.startswith("new_session:"):
                         target_type = action.split(":")[1]
-                        print(f"{BOLD}{WHITE}Describe your {target_type} task:{RESET}")
-                        desc = await get_multiline_input()
+                        desc = await get_multiline_input(prompt_text=f"Describe your {target_type} task:")
                         if not desc:
                             print(f"{RED}Description cannot be empty. Switch cancelled.{RESET}")
                             continue
@@ -839,23 +849,21 @@ async def interactive_cli():
         finally:
             stop_spinner()
         
-        mode_indicator = f"{BOLD}{YELLOW}📋 PLAN MODE{RESET}" if session.active_mode == "PLAN" else f"{BOLD}{GREEN}🔨 BUILD MODE{RESET}"
-        summary_lines = [
-            "\n" + f"{GREY}────────────────────────────────────────────────────────────{RESET}",
-            f"{mode_indicator} · {BOLD}{BLUE}FINAL DEBATE SUMMARY ({pending_step.name}):{RESET}",
-            f"{GREY}────────────────────────────────────────────────────────────{RESET}"
-        ]
+        title = f"DevCoach Response ({session.active_mode})"
+        if session.type == "GENERAL_ENGINEERING_QUESTION":
+            title = "DevCoach Response (GENERAL)"
+            
         if debate_res['status'] in ["COMPLETED", "SKIPPED"]:
             status_color = GREEN
         elif debate_res['status'] == "COMPLETED_WITH_WARNINGS":
             status_color = YELLOW
         else:
             status_color = RED
-        summary_lines.append(f"⚖️  {BOLD}Decision Status: {status_color}{debate_res['status']}{RESET}")
-        summary_lines.append(f"💬 {BOLD}Feedback: {RESET}{debate_res['feedback']}")
-        summary_lines.append(f"{GREY}────────────────────────────────────────────────────────────{RESET}")
+            
+        status_str = f"⚖️  {BOLD}Decision Status:{RESET} {status_color}{debate_res['status']}{RESET}"
+        box_content = f"{status_str}\n\n{debate_res['feedback']}"
         
-        await print_lines_gradually(summary_lines)
+        print_boxed_response(title, box_content)
             
     db.close()
 

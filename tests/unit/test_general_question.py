@@ -61,7 +61,7 @@ async def test_general_question_short_circuit(db_session):
     repository.add_steps(db_session, session.id, general_workflow.get_step_names())
 
     call_count = 0
-    async def mock_get_input():
+    async def mock_get_input(*args, **kwargs):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -140,7 +140,7 @@ async def test_general_question_text_skip_guard(db_session):
     repository.add_steps(db_session, session.id, general_workflow.get_step_names())
 
     call_count = 0
-    async def mock_get_input():
+    async def mock_get_input(*args, **kwargs):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -234,7 +234,7 @@ async def test_general_question_with_code_snippets(db_session):
     repository.add_steps(db_session, session.id, general_workflow.get_step_names())
 
     call_count = 0
-    async def mock_get_input():
+    async def mock_get_input(*args, **kwargs):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -275,7 +275,7 @@ async def test_general_question_without_code(db_session):
     repository.add_steps(db_session, session.id, general_workflow.get_step_names())
 
     call_count = 0
-    async def mock_get_input():
+    async def mock_get_input(*args, **kwargs):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -316,7 +316,7 @@ async def test_general_question_skip_warning_and_message(db_session):
     repository.add_steps(db_session, session.id, general_workflow.get_step_names())
 
     call_count = 0
-    async def mock_get_input():
+    async def mock_get_input(*args, **kwargs):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
