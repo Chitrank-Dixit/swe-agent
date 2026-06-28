@@ -8,7 +8,7 @@ from src.workflows.bug import bug_workflow
 @pytest.mark.asyncio
 async def test_general_question_answered_session_remains_open_and_reuse_id(db_session):
     call_count = 0
-    async def mock_get_input():
+    async def mock_get_input(*args, **kwargs):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -55,7 +55,7 @@ async def test_bug_workflow_completed_remains_open_and_new_task(db_session):
     repository.add_steps(db_session, session.id, steps_list)
 
     call_count = 0
-    async def mock_get_input():
+    async def mock_get_input(*args, **kwargs):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -116,7 +116,7 @@ async def test_bug_workflow_completed_remains_open_and_new_task(db_session):
 
 @pytest.mark.asyncio
 async def test_q_cleanly_exits(db_session):
-    async def mock_get_input():
+    async def mock_get_input(*args, **kwargs):
         return "/q"
 
     with patch("src.cli.SessionLocal", return_value=db_session), \

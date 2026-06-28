@@ -31,3 +31,26 @@
 - [x] Create tests/unit/test_persistent_session.py to verify persistence, command exits, and session ID reuse
 - [x] Verify unit, integration, and BDD test suites pass
 
+# Phase 6 Checklist: Terminal UI (TUI) Upgrades
+- [x] Refactor print_welcome_box to show slim header
+- [x] Refactor print_prompt_bar to show slim header/status and helper hints
+- [x] Refactor get_multiline_input to support bordered input box and continuation characters
+- [x] Refactor print_boxed_response and integrate into debate summary output
+- [x] Update persistent footers and all input capture loops in cli.py
+- [x] Verify test suite passes successfully
+
+# Phase 7 Checklist: Codex-style TUI Redesign
+- [x] Refactor print_welcome_box to show Codex card
+- [x] Refactor print_prompt_bar to omit hints line
+- [x] Refactor print_boxed_response to output flat bullets and headings with no borders
+- [x] Refactor get_multiline_input to print flat text and use › prefix without borders
+- [x] Update handle_slash_command to print prompt bar status immediately on mode changes
+- [x] Update startup and all input loops in cli.py
+- [x] Verify test suite passes successfully
+# Phase 8 Checklist: Session Resumption Support
+- [x] Implement CLI argument handling in main and interactive_cli parameters
+- [x] Implement database lookup and state validation for command-line resumption
+- [x] Implement /resume slash command in handle_slash_command
+- [x] Handle resume action in both interactive_cli input loops to update session context
+- [x] Create tests/unit/test_resume_session.py to verify resumption paths and edge cases
+- [x] Verify test suite passes successfully

@@ -1,18 +1,49 @@
-# Tark (Software Engineering Workflow Coach)
+# DevCoach (Software Engineering Workflow Coach)
 
-Tark (meaning "arguments" or "discussion" in Hindi) is a production-grade multi-agent coaching system designed to guide developers through rigorous software engineering workflows (TDD, BDD, monitoring, observability, and structured planning). The system takes free-text input, classifies the task, and initiates a debate between specialized AI agents using Microsoft AutoGen (v0.4), FastAPI, and local LLMs (LM Studio).
+DevCoach is a production-grade multi-agent coaching system designed to guide developers through rigorous software engineering workflows (TDD, BDD, monitoring, observability, and structured planning). The system takes free-text input, classifies the task, and orchestrates a team of specialized AI agents using FastAPI, local/remote LLMs (LM Studio/Qwen/OpenAI), and sequential structured output pipelines.
+
+---
+
+## Key Features
+
+### 1. Sequential Structured Orchestration
+Instead of passing full conversation logs between agents—which causes large prompts and cumulative latency—DevCoach parses and passes compact Pydantic objects between agents:
+- **Coordinator** classifies task type and defines targets.
+- **Workflow Coach** outlines steps and provides targeted instructions.
+- **Test Strategy** produces BDD scenarios and test skeletons.
+- **Skeptic Critic** audits proposed solutions for edge cases and safety.
+
+### 2. Parallel Agent Execution & Skeptic Gating
+- **Concurrent Runs**: Runs independent agents (e.g., Test Strategy and Skeptic Critic) in parallel using Python's `asyncio.gather`.
+- **Stream Buffering**: Buffers streamed output tokens from concurrent tasks and plays them back sequentially to the user interface to ensure clear, non-interleaved console printing.
+- **Skeptic Gating**: Bypasses the Skeptic Critic LLM agent entirely for trivial changes (e.g. documentation, comment updates, small line edits) to reduce response latency and token usage.
+
+### 3. Persistent Interactive CLI (REPL)
+- **Codex / Claude Code Style**: The interactive CLI session remains active after workflow steps or answers complete. Developers can continue typing follow-up questions or execute commands.
+- **Slash Commands**: Rich in-session interactive commands are supported:
+  - `/plan`: Switch session to Planning Mode (safety gate active, blocks modifications).
+  - `/build`: Switch session to Build Mode (runs test suites and confirms file modifications).
+  - `/status`: Render the current checklist status and metrics.
+  - `/undo`: Revert the last completed step to PENDING.
+  - `/skip`: Bypass the current step.
+  - `/resume <session_id>`: Dynamically switch contexts and resume a past session.
+  - `/quit` / `/exit` / `/q`: Terminate and exit the interactive loop.
+- **Task Re-Classification**: Automatically detects if the developer switches task types (e.g. transitioning from a completed BUG workflow to starting a new FEATURE workflow) and adjusts the active checklist steps dynamically while preserving session context.
+
+### 4. Direct Q&A Short-Circuit
+General engineering queries containing code snippets or open questions skip the checklist workflow steps and are routed directly to the **General Engineering Advisor** for immediate feedback and stream responses.
 
 ---
 
 ## Architecture and Agents
 
-The team consists of 8 agents orchestrating turn-based checks inside a group chat:
+The team consists of specialized agents orchestrating checks:
 1. **CoordinatorAgent**: Entry point. Classifies input and routes dialogue.
 2. **BugWorkflowCoach**: Leads BUG workflow steps.
 3. **FeatureWorkflowCoach**: Leads FEATURE workflow steps.
 4. **MeetingWorkflowCoach**: Leads MEETING workflow steps.
 5. **TestStrategyAgent**: Generates pytest skeletons and BDD Gherkin scenarios.
-6. **ObservabilityAgent**: Recommends logging schema, Prometheus metrics, and tracing span setup.
+6. **ObservabilityAgent**: Recommends logging schema, Prometheus metrics, and tracing setups.
 7. **SkepticCriticAgent**: Constructively challenges decisions and checks edge cases.
 8. **RegretGuardJudge**: Evaluates step completion, updates SQLite state, writes artifacts, and closes steps.
 
@@ -86,17 +117,28 @@ make run-cli
 ```
 This boots up a containerized interactive coaching session right inside your terminal, letting you speak directly to the agent debate team.
 
-#### 3. Run the Test Suites
+#### 3. Resume an Existing Session
+To resume a previous coaching session, use the `resume` command with the session ID:
+```bash
+make resume session=<session_id>
+```
+Or run directly via python:
+```bash
+python src/cli.py <session_id>
+```
+You can also dynamically switch to or resume another session mid-CLI by using the `/resume <session_id>` command in the input prompts.
+
+#### 4. Run the Test Suites
 ```bash
 make test
 ```
-Runs the 11 tests (including unit, integration, BDD, and functional debate loops) inside the Docker container.
+Runs the test suite inside the Docker container.
 
-#### 4. Clean up Container Volumes & Caches
+#### 5. Clean up Container Volumes & Caches
 ```bash
 make clean
 ```
-Stops the containers and wipes the SQLite storage volume, logs, and caches cleanly.
+Stops the containers and wipes the SQLite database, logs, and caches cleanly.
 
 ---
 
@@ -150,9 +192,9 @@ Returns full session logs, status of checklist items, and links to created testi
 
 ## Multi-line Input Methods
 
-By default, most terminal emulators on macOS (including Terminal.app, iTerm2, and the VS Code integrated terminal) send a standard carriage return (`\r`) when you press `Shift+Enter`. This causes the interactive CLI to immediately submit your input rather than inserting a newline.
+By default, most terminal emulators send a standard carriage return (`\r`) when you press `Shift+Enter`. This causes the interactive CLI to immediately submit your input rather than inserting a newline.
 
-To support developers in all environments, Tark supports three different methods to type multi-line inputs:
+To support developers in all environments, DevCoach supports three different methods to type multi-line inputs:
 
 ### Method 1: Backslash Line Continuation (No Configuration Needed)
 End any line with a backslash (`\`) and press `Enter`. The CLI will automatically strip the backslash and open a newline for you to continue typing.
