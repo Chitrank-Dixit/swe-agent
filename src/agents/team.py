@@ -618,14 +618,17 @@ async def execute_step_debate(
             if test_content:
                 feedback_parts.append(f"### 🧪 Test Strategy:\n{test_content}\n")
                 
-        feedback_parts.append(f"### ⚖️ Skeptic's Critique:\n{skeptic_out.critique}\n")
-        if skeptic_out.gaps or skeptic_out.challenges:
-            gap_content = ""
-            if skeptic_out.gaps:
-                gap_content += "#### Identified Gaps:\n" + "\n".join(f"- {g}" for g in skeptic_out.gaps) + "\n"
-            if skeptic_out.challenges:
-                gap_content += "#### Skeptic's Challenges:\n" + "\n".join(f"- {c}" for c in skeptic_out.challenges) + "\n"
-            feedback_parts.append(f"{gap_content}\n")
+        if skeptic_out:
+            feedback_parts.append(f"### ⚖️ Skeptic's Critique:\n{skeptic_out.critique}\n")
+            if skeptic_out.gaps or skeptic_out.challenges:
+                gap_content = ""
+                if skeptic_out.gaps:
+                    gap_content += "#### Identified Gaps:\n" + "\n".join(f"- {g}" for g in skeptic_out.gaps) + "\n"
+                if skeptic_out.challenges:
+                    gap_content += "#### Skeptic's Challenges:\n" + "\n".join(f"- {c}" for c in skeptic_out.challenges) + "\n"
+                feedback_parts.append(f"{gap_content}\n")
+        else:
+            feedback_parts.append("### ⚖️ Skeptic's Critique:\n(Bypassed - Trivial or non-code task)\n")
         
         feedback_text = "\n".join(feedback_parts)
         

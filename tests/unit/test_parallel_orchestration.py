@@ -129,3 +129,50 @@ async def test_execute_step_debate_parallel_execution(db_session):
         assert "Coach's Proposals" in res["feedback"]
         assert "Test Strategy" in res["feedback"]
         assert "Skeptic's Critique" in res["feedback"]
+
+@pytest.mark.asyncio
+async def test_execute_step_debate_skeptic_bypassed(db_session):
+    from src.state import repository
+    from src.workflows.feature import feature_workflow
+    
+    session = repository.create_session(
+        db_session,
+        raw_input="Add docstring typo fix",
+        session_type="FEATURE"
+    )
+    session_id = session.id
+    steps = repository.add_steps(db_session, session_id, feature_workflow.get_step_names())
+    pending_step = steps[0]
+    
+    mock_coord_json = '{"workflow_type": "FEATURE", "goal": "Add docstring typo fix", "relevant_files": [], "constraints": [], "context_summary": "Trivial feature input"}'
+    
+    # Trivial coach proposals to trigger skeptic bypass (touches single file, trivial comment)
+    mock_coach_json = (
+        '{"step_name": "Understand Problem & Goals", '
+        '"recommendations": "Trivial typo fix in comments.", '
+        '"actions": ["Edit src/cli.py"], '
+        '"checks": []}'
+    )
+    
+    mock_test_json = '{"bdd_scenarios": [], "pytest_skeletons": []}'
+    
+    stream_idx = 0
+    # No skeptic response since skeptic is not run
+    mock_responses = [mock_coord_json, mock_coach_json, mock_test_json]
+    
+    async def mock_run_agent_stream(agent, prompt, agent_name, callback):
+        nonlocal stream_idx
+        res = mock_responses[stream_idx]
+        stream_idx += 1
+        return res
+
+    with patch("src.agents.team.SessionLocal", return_value=db_session), \
+         patch("src.agents.team.run_agent_stream", side_effect=mock_run_agent_stream), \
+         patch("src.agents.team.check_regret_guard", return_value=[]):
+         
+        from src.agents import team
+        res = await team.execute_step_debate(session_id, "Propose details")
+        
+        assert res["status"] == "COMPLETED"
+        assert "Coach's Proposals" in res["feedback"]
+        assert "Bypassed - Trivial or non-code task" in res["feedback"]
